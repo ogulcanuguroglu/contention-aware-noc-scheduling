@@ -1,0 +1,34 @@
+# Default configuration for the contention-aware DAG scheduling simulation.
+# All parameters can be overridden via CLI flags or experiment runner configs.
+
+noc:
+  rows: 4                  # Number of rows in the 2D mesh (total processors = rows * cols)
+  cols: 4                  # Number of columns in the 2D mesh
+  alpha: 1.0               # Hop latency coefficient: duration += alpha * hop_count
+  beta: 0.1                # Bandwidth coefficient:   duration += beta * volume
+
+dag:
+  n_tasks: 20              # Number of tasks in the generated DAG
+  edge_prob: 0.3           # Probability of edge between eligible task pairs
+  ccr: 1.0                 # Communication-to-Computation Ratio
+  comp_min: 10             # Minimum task computation cost
+  comp_max: 100            # Maximum task computation cost
+  seed: 42                 # Random seed for reproducibility
+
+experiment:
+  schedulers:
+    - heft
+    - ca_ls
+    - classical_dup
+    - proposed
+  n_tasks_list: [20, 50, 100]
+  edge_prob_list: [0.15, 0.30]
+  ccr_list: [0.1, 1.0, 5.0]
+  seeds: [42, 123, 999, 2024, 7777]
+  noc_sizes:
+    - [4, 4]
+    - [8, 8]
+
+output:
+  raw_dir: results/raw
+  plots_dir: results/plots
