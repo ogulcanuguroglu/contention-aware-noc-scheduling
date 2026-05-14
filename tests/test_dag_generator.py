@@ -5,10 +5,9 @@ Covers: acyclicity, connectivity, CCR tolerance, reproducibility.
 Implemented in Phase 2.
 """
 
-import pytest
+import src.dag_generator  # noqa: F401
 
 
-def test_placeholder_phase_2_not_implemented():
-    """Confirms dag_generator is not yet implemented (Phase 0 stub check)."""
-    with pytest.raises(NotImplementedError):
-        import src.dag_generator  # noqa: F401
+def test_dag_generator_importable():
+    """Confirms src.dag_generator is importable (Phase 0 stub check)."""
+    assert src.dag_generator is not None

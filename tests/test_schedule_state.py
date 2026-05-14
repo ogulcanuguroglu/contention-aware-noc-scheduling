@@ -6,10 +6,9 @@ Data Ready Time (DRT) calculation, and clone correctness.
 Implemented in Phase 4.
 """
 
-import pytest
+import src.schedule_state  # noqa: F401
 
 
-def test_placeholder_phase_4_not_implemented():
-    """Confirms schedule_state.py is not yet implemented (Phase 0 stub check)."""
-    with pytest.raises(NotImplementedError):
-        import src.schedule_state  # noqa: F401
+def test_schedule_state_importable():
+    """Confirms src.schedule_state is importable (Phase 0 stub check)."""
+    assert src.schedule_state is not None
