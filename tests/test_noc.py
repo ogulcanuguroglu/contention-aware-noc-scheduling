@@ -6,10 +6,9 @@ link utilization calculation.
 Implemented in Phase 3.
 """
 
-import pytest
+import src.noc  # noqa: F401
 
 
-def test_placeholder_phase_3_not_implemented():
-    """Confirms noc.py is not yet implemented (Phase 0 stub check)."""
-    with pytest.raises(NotImplementedError):
-        import src.noc  # noqa: F401
+def test_noc_importable():
+    """Confirms src.noc is importable (Phase 0 stub check)."""
+    assert src.noc is not None

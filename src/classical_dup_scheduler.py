@@ -5,7 +5,3 @@ Applies parent-only task duplication using the classic communication model
 (no link-level reservations). Uses Delta_EFT > 0 decision rule.
 Implemented in Phase 7.
 """
-
-raise NotImplementedError(
-    "classical_dup_scheduler.py is not yet implemented. See Phase 7 in PHASE_PLAN.md."
-)
