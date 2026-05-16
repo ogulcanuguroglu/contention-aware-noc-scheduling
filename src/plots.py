@@ -4,7 +4,7 @@ Visualization functions for experiment results.
 Produces comparison plots: makespan vs CCR, speedup vs CCR, link utilization,
 task instance ratio, communication count, and scheduler runtime.
 Saves figures to results/plots/.
-Implemented in Phase 10.
+Implemented in Phase 10; robustness and presentation cleanup applied after.
 
 Backend note:
     matplotlib is configured to use the non-interactive Agg backend at import
@@ -127,9 +127,15 @@ def aggregate_results(
 
     Raises:
         ValueError: if metric is not a column in df.
+        ValueError: if any group_by column is missing from df.
     """
     if group_by is None:
         group_by = ["scheduler", "ccr"]
+    missing_cols = [c for c in group_by if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"group_by columns not found in DataFrame: {missing_cols}"
+        )
     if metric not in df.columns:
         raise ValueError(
             f"Metric '{metric}' not found in DataFrame columns: {sorted(df.columns)}"
@@ -159,8 +165,15 @@ def _save_figure(fig: plt.Figure, output_path: Path) -> Path:
 
 
 def _apply_ccr_xaxis(ax: plt.Axes, ccr_values: list) -> None:
-    """Configure x-axis for CCR: log scale with labelled tick positions."""
-    ax.set_xscale("log")
+    """
+    Configure x-axis for CCR plots.
+
+    Uses log scale when all CCR values are strictly positive (the common case).
+    Falls back to linear scale if any value is <= 0 (e.g. ccr=0.0 experiments).
+    In both cases the exact CCR tick positions are labelled.
+    """
+    if all(v > 0 for v in ccr_values):
+        ax.set_xscale("log")
     ax.xaxis.set_major_locator(mticker.FixedLocator(ccr_values))
     ax.xaxis.set_minor_locator(mticker.NullLocator())
     ax.xaxis.set_major_formatter(
@@ -179,20 +192,27 @@ def plot_metric_vs_ccr(
     title: str | None = None,
     ylabel: str | None = None,
     scheduler_order: list[str] | None = None,
+    show_error: bool = True,
+    reference_line_y: float | None = None,
 ) -> Path:
     """
     Plot mean metric vs CCR for each scheduler with optional error bars.
 
-    Error bars are drawn when a scheduler has more than one observation per
-    CCR value (i.e. multiple seeds). Uses the non-interactive Agg backend.
+    Error bars are drawn when show_error=True and a scheduler has more than
+    one observation per CCR value (i.e. multiple seeds).
+    Uses the non-interactive Agg backend.
 
     Args:
-        df:              Results DataFrame (from load_results or run_experiment_grid).
-        metric:          Column name to plot on the y-axis.
-        output_path:     Destination PNG path. Parent directories are created.
-        title:           Figure title. Defaults to "<metric> vs CCR".
-        ylabel:          Y-axis label. Defaults to metric name.
-        scheduler_order: Schedulers to include and their draw order.
+        df:               Results DataFrame (from load_results or run_experiment_grid).
+        metric:           Column name to plot on the y-axis.
+        output_path:      Destination PNG path. Parent directories are created.
+        title:            Figure title. Defaults to "<metric> vs CCR".
+        ylabel:           Y-axis label. Defaults to metric name.
+        scheduler_order:  Schedulers to include and their draw order.
+        show_error:       Draw std error bars (default True). Set False to plot
+                          mean lines only, useful when error bars dominate.
+        reference_line_y: If given, draw a subtle horizontal dashed line at
+                          this y value (e.g. 1.0 for the HEFT speedup baseline).
 
     Returns:
         Path to the saved PNG file.
@@ -209,6 +229,15 @@ def plot_metric_vs_ccr(
 
     fig, ax = plt.subplots(figsize=(7, 4))
 
+    if reference_line_y is not None:
+        ax.axhline(
+            y=reference_line_y,
+            color="gray",
+            linewidth=0.8,
+            linestyle="--",
+            zorder=0,
+        )
+
     for sched in scheduler_order:
         sub = agg[agg["scheduler"] == sched].sort_values("ccr")
         if sub.empty:
@@ -219,7 +248,8 @@ def plot_metric_vs_ccr(
         marker = _SCHEDULER_MARKERS.get(sched, "o")
 
         has_error = (
-            std_col in sub.columns
+            show_error
+            and std_col in sub.columns
             and count_col in sub.columns
             and (sub[count_col] > 1).any()
             and sub[std_col].notna().any()
@@ -264,49 +294,69 @@ def plot_metric_vs_ccr(
 # Wrapper plot functions
 # ---------------------------------------------------------------------------
 
-def plot_makespan_vs_ccr(df: pd.DataFrame, output_path: str | Path) -> Path:
+def plot_makespan_vs_ccr(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    show_error: bool = True,
+) -> Path:
     """Plot mean makespan vs CCR for each scheduler."""
     return plot_metric_vs_ccr(
         df, "makespan", output_path,
         title="Makespan vs CCR", ylabel="Makespan",
+        show_error=show_error,
     )
 
 
-def plot_speedup_vs_ccr(df: pd.DataFrame, output_path: str | Path) -> Path:
+def plot_speedup_vs_ccr(
+    df: pd.DataFrame,
+    output_path: str | Path,
+    show_error: bool = True,
+) -> Path:
     """Plot mean speedup over HEFT vs CCR for each scheduler."""
     return plot_metric_vs_ccr(
         df, "speedup_vs_heft", output_path,
         title="Speedup vs CCR", ylabel="Speedup over HEFT",
+        show_error=show_error,
+        reference_line_y=1.0,
     )
 
 
 def plot_task_instance_ratio_vs_ccr(
-    df: pd.DataFrame, output_path: str | Path
+    df: pd.DataFrame,
+    output_path: str | Path,
+    show_error: bool = True,
 ) -> Path:
     """Plot mean task instance ratio vs CCR for each scheduler."""
     return plot_metric_vs_ccr(
         df, "task_instance_ratio", output_path,
         title="Task Instance Ratio vs CCR", ylabel="Task Instance Ratio",
+        show_error=show_error,
     )
 
 
 def plot_communication_count_vs_ccr(
-    df: pd.DataFrame, output_path: str | Path
+    df: pd.DataFrame,
+    output_path: str | Path,
+    show_error: bool = True,
 ) -> Path:
     """Plot mean communication instance count vs CCR for each scheduler."""
     return plot_metric_vs_ccr(
         df, "communication_count", output_path,
         title="Communication Count vs CCR", ylabel="Communication Count",
+        show_error=show_error,
     )
 
 
 def plot_link_utilization_vs_ccr(
-    df: pd.DataFrame, output_path: str | Path
+    df: pd.DataFrame,
+    output_path: str | Path,
+    show_error: bool = True,
 ) -> Path:
     """Plot mean maximum link utilization vs CCR for each scheduler."""
     return plot_metric_vs_ccr(
         df, "max_link_utilization", output_path,
         title="Max Link Utilization vs CCR", ylabel="Max Link Utilization",
+        show_error=show_error,
     )
 
 
@@ -327,7 +377,8 @@ def plot_runtime_vs_task_count(
         df:              Results DataFrame.
         output_path:     Destination PNG path.
         scheduler_order: Draw order for schedulers.
-        log_y:           Use log scale on the y-axis (default True).
+        log_y:           Prefer log scale on the y-axis (default True).
+                         Falls back to linear if any aggregated mean is <= 0.
 
     Returns:
         Path to the saved PNG file.
@@ -356,7 +407,7 @@ def plot_runtime_vs_task_count(
             markersize=6,
         )
 
-    if log_y:
+    if log_y and (agg["runtime_ms_mean"] > 0).all():
         ax.set_yscale("log")
     ax.set_xlabel("Number of Tasks")
     ax.set_ylabel("Runtime (ms)")
@@ -417,9 +468,17 @@ def print_summary_table(
 
     The returned DataFrame is not printed automatically; callers decide how
     to display it (e.g. via .to_string() or to_markdown()).
+
+    Raises:
+        ValueError: if any group_by column is missing from df.
     """
     if group_by is None:
         group_by = ["scheduler"]
+    missing_cols = [c for c in group_by if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"group_by columns not found in DataFrame: {missing_cols}"
+        )
     available = [m for m in _SUMMARY_METRICS if m in df.columns]
     return df.groupby(group_by)[available].mean().reset_index()
 

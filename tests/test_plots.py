@@ -194,6 +194,11 @@ class TestAggregateResults:
         # Default group_by = ["scheduler", "ccr"]
         assert set(agg.columns) >= {"scheduler", "ccr", "makespan_mean"}
 
+    def test_missing_group_by_column_raises(self):
+        df = make_results_df()
+        with pytest.raises(ValueError):
+            plots.aggregate_results(df, "makespan", group_by=["scheduler", "missing_col"])
+
 
 # ---------------------------------------------------------------------------
 # 3. TestPlotMetricVsCCR
@@ -250,6 +255,20 @@ class TestPlotMetricVsCCR:
         )
         assert out.exists() and out.stat().st_size > 0
 
+    def test_show_error_false_writes_nonempty_png(self, tmp_path):
+        df = make_results_df()
+        out = tmp_path / "no_error.png"
+        plots.plot_metric_vs_ccr(df, "makespan", out, show_error=False)
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_zero_ccr_falls_back_to_linear_scale(self, tmp_path):
+        df = make_results_df().copy()
+        # Replace ccr=0.1 with 0.0 to trigger the linear-scale fallback
+        df.loc[df["ccr"] == 0.1, "ccr"] = 0.0
+        out = tmp_path / "zero_ccr.png"
+        plots.plot_metric_vs_ccr(df, "makespan", out)
+        assert out.exists() and out.stat().st_size > 0
+
 
 # ---------------------------------------------------------------------------
 # 4. TestWrapperPlots
@@ -279,6 +298,11 @@ class TestWrapperPlots:
     def test_plot_link_utilization_vs_ccr(self, tmp_path):
         df = make_results_df()
         out = plots.plot_link_utilization_vs_ccr(df, tmp_path / "link.png")
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_speedup_wrapper_show_error_false(self, tmp_path):
+        df = make_results_df()
+        out = plots.plot_speedup_vs_ccr(df, tmp_path / "speedup_no_err.png", show_error=False)
         assert out.exists() and out.stat().st_size > 0
 
 
@@ -318,6 +342,13 @@ class TestPlotRuntimeVsTaskCount:
         plots.plot_runtime_vs_task_count(
             df, out, scheduler_order=["heft", "proposed"]
         )
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_zero_runtime_falls_back_to_linear(self, tmp_path):
+        df = make_results_df().copy()
+        df["runtime_ms"] = 0.0
+        out = tmp_path / "runtime_zero.png"
+        plots.plot_runtime_vs_task_count(df, out, log_y=True)
         assert out.exists() and out.stat().st_size > 0
 
 
@@ -398,9 +429,30 @@ class TestPrintSummaryTable:
         heft_row = summary[summary["scheduler"] == "heft"].iloc[0]
         assert abs(heft_row["speedup_vs_heft"] - 1.0) < 1e-9
 
+    def test_missing_group_by_column_raises(self):
+        df = make_results_df()
+        with pytest.raises(ValueError):
+            plots.print_summary_table(df, group_by=["scheduler", "missing_col"])
+
 
 # ---------------------------------------------------------------------------
-# 8. TestCLI
+# 8. TestSchedulerLabels
+# ---------------------------------------------------------------------------
+
+class TestSchedulerLabels:
+    def test_all_default_schedulers_have_labels(self):
+        for sched in _SCHEDULERS:
+            assert sched in plots._SCHEDULER_LABELS, f"No label for: {sched}"
+
+    def test_label_display_names(self):
+        assert plots._SCHEDULER_LABELS["heft"] == "HEFT"
+        assert plots._SCHEDULER_LABELS["contention_aware"] == "CA-LS"
+        assert plots._SCHEDULER_LABELS["classical_duplication"] == "CD-LS"
+        assert plots._SCHEDULER_LABELS["proposed"] == "CA-D (Proposed)"
+
+
+# ---------------------------------------------------------------------------
+# 9. TestCLI
 # ---------------------------------------------------------------------------
 
 class TestCLI:
