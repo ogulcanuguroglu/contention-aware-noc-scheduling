@@ -66,6 +66,9 @@ def validate_dataframe(df: pd.DataFrame) -> None:
     no_nan_cols = [
         "makespan", "speedup_vs_heft", "task_instance_ratio",
         "communication_count", "max_link_utilization", "runtime_ms",
+        "replayed_makespan", "replayed_speedup_vs_heft",
+        "replayed_communication_count", "replayed_max_link_utilization",
+        "replay_overhead_ratio", "replayed_vs_original_delta",
     ]
     for col in no_nan_cols:
         n_nan = df[col].isna().sum()
@@ -275,6 +278,13 @@ without duplication.
         " It should not be presented as the full final evaluation grid."
         " The broader methodology and paper alignment are defined in"
         " results/summary/project_alignment_audit.md.\n",
+        "> **Phase 13 note**: Fair contention replay metrics are now included in"
+        " all experiment CSVs (`replayed_makespan`, `replayed_speedup_vs_heft`,"
+        " `replayed_communication_count`, `replayed_max_link_utilization`,"
+        " `replay_overhead_ratio`, `replayed_vs_original_delta`). These columns"
+        " replay every scheduler's placement decisions under the common"
+        " contention-aware model for fair physical comparison. Regenerate the CSV"
+        " to include these columns.\n",
         config_section,
         mean_section,
         best_section,
