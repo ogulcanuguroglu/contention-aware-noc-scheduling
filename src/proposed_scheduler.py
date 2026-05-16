@@ -3,18 +3,18 @@ Proposed contention-aware task duplication scheduler (CA-D).
 
 Main contribution of the project. Combines HEFT-style upward-rank list
 scheduling, contention-aware link-level communication reservation via
-ScheduleState.reserve_communication(), and selective parent-only task
-duplication evaluated under the contention-aware model.
+ScheduleState.reserve_communication(), and selective task duplication
+with greedy recursive ancestor duplication inspired by critical-parent
+recursive duplication, evaluated under the contention-aware model.
 
-Applies duplication only when Delta_EFT = EFT_no_dup - EFT_dup > 0.
-Implemented in Phase 8.
+Applies duplication only when Delta_EFT = EFT_no_dup - EFT_dup > _EPS.
 
-Key differences from CA-LS (Phase 6):
+Key differences from CA-LS:
     CA-LS reserves communications contention-awarely but does not duplicate.
     ProposedScheduler evaluates duplicating each direct predecessor onto the
-    candidate processor and applies the duplication when Delta_EFT > 0.
+    candidate processor and applies the duplication when Delta_EFT > _EPS.
 
-Key differences from CD-LS (Phase 7):
+Key differences from CD-LS:
     CD-LS uses the classic (analytical) communication model with no link
     reservations.  ProposedScheduler evaluates Delta_EFT using the
     contention-aware model, so duplications are committed only when they
@@ -33,11 +33,23 @@ Ranking:
 Duplication rule (per predecessor, evaluated sequentially):
     For each direct predecessor pred of task T on candidate processor P:
         EFT_no_dup = EFT of T on P without duplicating pred (contention-aware)
-        EFT_dup    = EFT of T on P with pred duplicated locally on P
+        EFT_dup    = EFT of T on P with pred and beneficial ancestors placed
+                     greedily on P via _place_recursive_duplicate
         Delta_EFT  = EFT_no_dup - EFT_dup
-    pred is duplicated on P only when Delta_EFT > 0.
+    pred is duplicated on P only when Delta_EFT > _EPS.
     Predecessors are evaluated in ascending task_id order for determinism.
     Later predecessors see the effect of earlier committed dups.
+
+Greedy recursive ancestor duplication (_place_recursive_duplicate):
+    When placing a duplicate of pred on P, each predecessor gp of pred that
+    is not already on P is evaluated independently: if placing gp recursively
+    on P reduces EFT for pred by more than _EPS, the gp placement is committed.
+    This is a greedy per-predecessor decision, not a globally optimal
+    critical-parent-chain selection.  The approach is inspired by the
+    recursive critical-parent duplication concept from contention-aware
+    scheduling literature but does not reproduce that algorithm exactly.
+    Ancestors already on P are skipped.  A visiting set prevents revisiting
+    tasks already in the current recursion chain.
 
 Best-instance selection:
     When a predecessor has multiple instances (primary + earlier dups), all
@@ -46,9 +58,9 @@ Best-instance selection:
     candidate.probe_communication_arrival(); no sub-clone is created per
     remote instance.  The winning instance is chosen by three-way priority
     (_is_better_instance):
-      1. Smallest arrival time.
-      2. Local over remote when arrivals are equal (avoids unnecessary comm
-         reservation on NoC links).
+      1. Arrival time strictly lower by more than _EPS.
+      2. Local over remote when arrivals are within _EPS (avoids unnecessary
+         comm reservation on NoC links).
       3. Smallest source processor_id as the final deterministic tie-break.
     Only the winning instance's communication (if remote) is then committed
     to the state via reserve_communication().
@@ -59,10 +71,11 @@ Communication reservation order:
     link-interval reservation sequences are independent of NetworkX edge
     insertion order.
 
-Limitations (Phase 8 scope):
-    - Parent-only: only direct predecessors are considered for duplication.
-    - No recursive critical-ancestor duplication.
-    - No redundant duplicate removal.
+Limitations:
+    - Greedy recursive ancestor placement is not guaranteed to find the
+      globally optimal ancestor chain.
+    - Redundant duplicate removal is not implemented; duplicated instances
+      that no longer reduce any child task's EFT remain in the schedule.
 """
 
 import math
@@ -72,6 +85,8 @@ from src.models import DAGGraph
 from src.noc import MeshNoC
 from src.schedule_state import ScheduleState
 
+_EPS = 1e-12
+
 
 class ProposedScheduler:
     """
@@ -79,8 +94,9 @@ class ProposedScheduler:
     homogeneous 2D mesh NoC.
 
     Combines contention-aware link-level communication reservation with
-    selective parent-only task duplication evaluated under the contention
-    model.  Uses HEFT-compatible upward-rank priority.
+    selective task duplication using greedy recursive ancestor placement
+    inspired by critical-parent recursive duplication.  Uses
+    HEFT-compatible upward-rank priority.
 
     Args:
         noc: MeshNoC instance describing the target hardware.
@@ -123,14 +139,17 @@ class ProposedScheduler:
 
     def schedule(self, dag: DAGGraph) -> ScheduleState:
         """
-        Schedule all tasks with parent-only contention-aware task duplication.
+        Schedule all tasks with contention-aware task duplication, applying
+        greedy recursive ancestor placement inspired by critical-parent
+        recursive duplication.
 
         For each ready task (highest-priority first), every processor is
-        evaluated on a clone of the current state.  Parent duplications are
-        tentatively applied per the Delta_EFT > 0 rule under the contention
-        model.  Only the winning processor candidate is promoted; rejected
-        clones are discarded so their dup instances and communication
-        reservations never pollute the committed final state.
+        evaluated on a clone of the current state.  Direct predecessors and
+        their ancestors may be duplicated on the candidate processor per the
+        Delta_EFT > _EPS rule under the contention model.  Only the winning
+        processor candidate is promoted; rejected clones are discarded so
+        their dup instances and communication reservations never pollute the
+        committed final state.
 
         Returns a ScheduleState with all task intervals committed and all
         selected remote communications represented by CommunicationInstance
@@ -193,10 +212,10 @@ class ProposedScheduler:
         """
         Evaluate placing task_id on processor_id without committing.
 
-        Clones state, applies beneficial parent duplications (Delta_EFT > 0)
-        under the contention-aware model, reserves selected predecessor
-        communications for task_id, and returns
-        (start_time, finish_time, candidate_state).
+        Clones state, applies beneficial direct-predecessor and recursive
+        ancestor duplications (Delta_EFT > _EPS) under the contention-aware
+        model, reserves selected predecessor communications for task_id, and
+        returns (start_time, finish_time, candidate_state).
 
         The task itself is NOT reserved in candidate_state; the caller decides
         whether to commit.  The original state is never mutated.
@@ -270,17 +289,19 @@ class ProposedScheduler:
         processor_id: int,
     ) -> tuple[float, float]:
         """
-        Apply beneficial parent duplications for task_id on processor_id
-        under the contention-aware model.
+        Apply beneficial parent (and recursive ancestor) duplications for
+        task_id on processor_id under the contention-aware model.
 
         Predecessors are evaluated in ascending task_id order for determinism.
         For each predecessor pred not already on processor_id:
             1. sub_no_dup = candidate.clone(); compute EFT_no_dup (reserves
                all predecessor comms in the sub-clone, then discards it).
-            2. sub_dup = candidate.clone(); place dup of pred; compute
-               EFT_dup from that sub-clone (then discard it).
-            3. If Delta_EFT > 0: commit dup and its grandparent comms to
-               candidate.  Later predecessors see this effect.
+            2. sub_dup = candidate.clone(); call _place_recursive_duplicate
+               to place pred and any beneficial ancestors on processor_id;
+               compute EFT_dup from that sub-clone (then discard it).
+            3. If Delta_EFT > _EPS: call _place_recursive_duplicate on the
+               live candidate to commit pred (and beneficial ancestors).
+               Later predecessors see this effect.
 
         After all preds, reserve the selected predecessor comms for task_id
         into candidate (final _contention_drt call) and return
@@ -300,21 +321,9 @@ class ProposedScheduler:
             )
             eft_no_dup = start_no_dup + comp_cost
 
-            # -- EFT_dup: sub-clone with pred duplicated on processor_id --
+            # -- EFT_dup: sub-clone with pred and ancestors recursively placed --
             sub_dup = candidate.clone()
-            dup_cost = dag.computation_cost(pred)
-            dup_drt = self._dup_drt_contention(dag, sub_dup, pred, processor_id)
-            dup_start = sub_dup.earliest_slot(
-                processor_id, dup_cost, not_before=dup_drt
-            )
-            dup_finish = dup_start + dup_cost
-            sub_dup.reserve_task(
-                task_id=pred,
-                processor_id=processor_id,
-                start_time=dup_start,
-                finish_time=dup_finish,
-                is_primary=False,
-            )
+            self._place_recursive_duplicate(dag, sub_dup, pred, processor_id, {task_id})
             drt_dup = self._contention_drt(dag, sub_dup, task_id, processor_id)
             start_dup = sub_dup.earliest_slot(
                 processor_id, comp_cost, not_before=drt_dup
@@ -322,20 +331,9 @@ class ProposedScheduler:
             eft_dup = start_dup + comp_cost
 
             # -- Commit dup only when strictly beneficial --
-            if eft_no_dup - eft_dup > 0:
-                # Recompute dup placement on the live candidate (not sub_dup),
-                # since candidate may have accumulated earlier committed dups.
-                dup_drt_c = self._dup_drt_contention(dag, candidate, pred, processor_id)
-                dup_start_c = candidate.earliest_slot(
-                    processor_id, dup_cost, not_before=dup_drt_c
-                )
-                dup_finish_c = dup_start_c + dup_cost
-                candidate.reserve_task(
-                    task_id=pred,
-                    processor_id=processor_id,
-                    start_time=dup_start_c,
-                    finish_time=dup_finish_c,
-                    is_primary=False,
+            if eft_no_dup - eft_dup > _EPS:
+                self._place_recursive_duplicate(
+                    dag, candidate, pred, processor_id, {task_id}
                 )
 
         # Reserve final predecessor comms for task_id and compute its slot.
@@ -344,6 +342,86 @@ class ProposedScheduler:
             processor_id, comp_cost, not_before=drt_final
         )
         return start_final, start_final + comp_cost
+
+    def _place_recursive_duplicate(
+        self,
+        dag: DAGGraph,
+        candidate: ScheduleState,
+        task_id: int,
+        processor_id: int,
+        visiting: set[int] | None = None,
+    ) -> None:
+        """
+        Place task_id as a duplicate on processor_id in candidate.
+
+        Mutates candidate only by committing beneficial recursive ancestor
+        placements and finally placing task_id itself.  All placements
+        use is_primary=False; no primary instances are created here.
+
+        Contract:
+          - If task_id already has an instance on processor_id, returns
+            immediately without any mutation.
+          - visiting guards against revisiting tasks already in the current
+            recursion chain.
+          - For each predecessor gp of task_id not already on processor_id,
+            independently evaluates whether placing gp recursively on
+            processor_id reduces EFT for task_id by more than _EPS.  If so,
+            commits the recursive gp placement before evaluating the next gp.
+          - Uses Delta_EFT > _EPS as the strict improvement rule throughout.
+          - Is greedy and deterministic: predecessors are evaluated in ascending
+            task_id order; each decision is local to the current task_id and
+            does not globally search for the optimal ancestor chain.
+          - Does not perform redundant duplicate removal; every committed
+            instance remains in the schedule regardless of later decisions.
+        Then places task_id itself using the (possibly ancestor-augmented) DRT.
+        """
+        if candidate.has_task_instance(task_id, processor_id):
+            return
+
+        if visiting is None:
+            visiting = set()
+        if task_id in visiting:
+            return
+        visiting = visiting | {task_id}
+
+        comp_cost = dag.computation_cost(task_id)
+
+        for gp in sorted(dag.predecessors(task_id)):
+            if candidate.has_task_instance(gp, processor_id):
+                continue  # already local — no recursive dup needed
+
+            # EFT of task_id on processor_id without recursive dup of gp
+            sub_no = candidate.clone()
+            drt_no = self._dup_drt_contention(dag, sub_no, task_id, processor_id)
+            eft_no = (
+                sub_no.earliest_slot(processor_id, comp_cost, not_before=drt_no)
+                + comp_cost
+            )
+
+            # EFT of task_id on processor_id with gp recursively duped
+            sub_yes = candidate.clone()
+            self._place_recursive_duplicate(dag, sub_yes, gp, processor_id, visiting)
+            drt_yes = self._dup_drt_contention(dag, sub_yes, task_id, processor_id)
+            eft_yes = (
+                sub_yes.earliest_slot(processor_id, comp_cost, not_before=drt_yes)
+                + comp_cost
+            )
+
+            if eft_no - eft_yes > _EPS:
+                self._place_recursive_duplicate(dag, candidate, gp, processor_id, visiting)
+
+        # Place task_id itself using the (possibly ancestor-augmented) candidate
+        drt_final = self._dup_drt_contention(dag, candidate, task_id, processor_id)
+        start_final = candidate.earliest_slot(
+            processor_id, comp_cost, not_before=drt_final
+        )
+        candidate.reserve_task(
+            task_id=task_id,
+            processor_id=processor_id,
+            start_time=start_final,
+            finish_time=start_final + comp_cost,
+            is_primary=False,
+        )
 
     def _contention_drt(
         self,
@@ -434,8 +512,7 @@ class ProposedScheduler:
         (grandparents of the original task).  Remote grandparent arrivals are
         computed read-only via probe_communication_arrival(); no sub-clone per
         remote instance.  The winning grandparent communication (if remote) is
-        committed to candidate via reserve_communication().  No recursive
-        ancestor duplication is attempted (Phase 8 scope).
+        committed to candidate via reserve_communication().
 
         Returns 0.0 if pred_id has no predecessors (entry task).
         Raises ValueError if any grandparent has no instances in candidate.
@@ -502,14 +579,17 @@ class ProposedScheduler:
         Return True when the candidate instance beats the current best.
 
         Priority order:
-          1. Smaller arrival time (strict).
-          2. Local over remote when arrivals are equal (avoids comm reservation).
-          3. Smaller source processor_id as final deterministic tie-break.
+          1. arrival < best_arrival - _EPS: strictly better → True.
+          2. arrival > best_arrival + _EPS: strictly worse → False.
+          3. Arrivals within _EPS (effectively equal):
+               a. Local over remote (avoids comm reservation on NoC links).
+               b. Smaller processor_id as deterministic tie-break.
         """
-        if arrival < best_arrival:
+        if arrival < best_arrival - _EPS:
             return True
-        if arrival > best_arrival:
+        if arrival > best_arrival + _EPS:
             return False
+        # Arrivals effectively equal: apply locality and processor-id tie-breaks
         if is_local and not best_is_local:
             return True
         if is_local == best_is_local and best_processor is not None:
