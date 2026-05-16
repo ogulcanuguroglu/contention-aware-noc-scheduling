@@ -22,7 +22,6 @@ get_finish_time with processor_id:
     same processor, as this should not occur in correct scheduling.
 """
 
-import copy
 import math
 
 from src.models import CommunicationInstance, Interval, Link, TaskInstance
@@ -378,13 +377,69 @@ class ScheduleState:
                 max_t = max(max_t, intervals[-1].finish_time)
         return max_t
 
+    def probe_communication_arrival(
+        self,
+        source_processor: int,
+        destination_processor: int,
+        ready_time: float,
+        communication_volume: float,
+    ) -> float:
+        """
+        Compute when a communication would finish without reserving any links.
+
+        Equivalent to reserve_communication() but read-only: finds the
+        earliest feasible start time using the current link intervals and
+        returns start_time + duration, without modifying any state.
+
+        Used by ProposedScheduler to compare candidate source instances
+        without creating sub-clones just for probing.
+
+        Local (same-processor) communication returns ready_time immediately.
+        """
+        self._validate_processor_id(source_processor, "source_processor")
+        self._validate_processor_id(destination_processor, "destination_processor")
+        self._validate_time_value(ready_time, "ready_time")
+        self._validate_time_value(communication_volume, "communication_volume")
+
+        if source_processor == destination_processor:
+            return ready_time
+
+        route = self._noc.get_route(source_processor, destination_processor)
+        duration = self._noc.communication_duration(
+            source_processor, destination_processor, communication_volume
+        )
+        start = self.earliest_route_slot(route, duration, not_before=ready_time)
+        return start + duration
+
     # ------------------------------------------------------------------
     # Clone
     # ------------------------------------------------------------------
 
     def clone(self) -> "ScheduleState":
-        """Return a deep copy independent from the original."""
-        return copy.deepcopy(self)
+        """
+        Return a structurally independent copy of this ScheduleState.
+
+        Interval, TaskInstance, CommunicationInstance, and Link objects are
+        never mutated after creation, so they can be shared between the
+        original and the clone.  Only the container lists and dicts are
+        copied, making this substantially faster than deepcopy on large states.
+        """
+        new_state = object.__new__(ScheduleState)
+        new_state._noc = self._noc
+        new_state.processor_intervals = {
+            pid: list(iv_list)
+            for pid, iv_list in self.processor_intervals.items()
+        }
+        new_state.link_intervals = {
+            link: list(iv_list)
+            for link, iv_list in self.link_intervals.items()
+        }
+        new_state.task_instances = {
+            tid: list(inst_list)
+            for tid, inst_list in self.task_instances.items()
+        }
+        new_state.communication_instances = list(self.communication_instances)
+        return new_state
 
     # ------------------------------------------------------------------
     # Integrity check
