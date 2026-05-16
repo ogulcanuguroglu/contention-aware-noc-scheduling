@@ -63,8 +63,8 @@ Validation should rely on small deterministic examples first, then random DAG ex
 
 **Important design decision:**
 Use `networkx.DiGraph` for the actual DAG representation, but document the expected node and edge attributes:
-- node attribute: `weight`
-- edge attribute: `volume`
+- node attribute: `computation_cost`
+- edge attribute: `communication_volume`
 
 **What is NOT in this phase:**
 - Random DAG generation
@@ -81,8 +81,8 @@ Use `networkx.DiGraph` for the actual DAG representation, but document the expec
 **Deliverables:**
 - `src/dag_generator.py`:
   - `generate_dag(n_tasks, edge_prob, ccr, comp_range, seed) -> networkx.DiGraph`
-  - Each node has `weight` computation cost
-  - Each edge has `volume` communication volume
+  - Each node has `computation_cost` computation cost
+  - Each edge has `communication_volume` communication volume
   - The graph is guaranteed acyclic
   - The graph avoids isolated nodes when possible
   - CCR is enforced by scaling edge volumes after graph generation
@@ -96,7 +96,7 @@ Use `networkx.DiGraph` for the actual DAG representation, but document the expec
 **CCR definition:**
 
 ```text
-CCR = total_communication_volume / total_computation_weight
+CCR = total_communication_volume / total_computation_cost
 ```
 
 **What is NOT in this phase:**
@@ -456,61 +456,57 @@ All `TaskInstance` objects from the original state are processed in a determinis
 
 ## Phase 14 — Graph Family Benchmark Generator
 
-**Status:** Planned (not yet implemented).
+**Status:** Complete.
 
 **Goal:** Add deterministic paper-like graph families for stronger benchmark comparison beyond random Erdős–Rényi DAGs.
 
-**New families to implement:**
-- chain
-- fork
-- join
-- fork-join
-- in-tree
-- out-tree
-- diamond / series-parallel-like DAG if feasible
+**Implemented families:**
+- `chain` — linear DAG: 0 → 1 → ... → n-1
+- `fork` — one root broadcasting to k parallel leaves
+- `join` — k source tasks all connecting to one sink
+- `fork_join` — parallel branches from root to sink
+- `in_tree` — balanced reduction tree with edges toward root
+- `out_tree` — balanced broadcast tree with edges away from root
+- `diamond` — layered series-parallel with complete bipartite inter-layer edges
 
-**Files to create or modify:**
-- `src/graph_families.py` — new module; one generator function per family
-- `tests/test_graph_families.py` — correctness tests for each family
-- `src/experiment_runner.py` — optional integration for graph-family experiments
+**Deliverables:**
+- `src/graph_families.py` — one generator function per family plus `generate_graph_family()` dispatcher, `scale_graph_to_ccr()`, `assign_random_costs()`
+- `tests/test_graph_families.py` — correctness tests for every generator and the dispatcher; structural checks, CCR scaling, reproducibility
 
 **What is NOT in this phase:**
 - Modifying existing scheduler modules
-- Modifying `dag_generator.py` beyond minor helpers
-- Running new large-scale experiments (that belongs to a later analysis phase)
+- Running new large-scale experiments
 
 **Validation:**
 - Each generator produces a valid `nx.DiGraph` accepted by `DAGGraph`
 - Structural checks: chain has n-1 edges, fork has k outgoing edges from root, etc.
-- CCR scaling still works on all families
+- CCR scaling verified for all families
+- Full test suite passed
 
 ---
 
-## Phase 15 — Improve Existing ProposedScheduler
+## Phase 15 — Improve Existing ProposedScheduler: Greedy Recursive Duplication and Conservative Pruning
 
-**Status:** Planned (not yet implemented).
+**Status:** Complete.
 
-**Goal:** Improve the current `ProposedScheduler` in-place with recursive critical-parent duplication and redundant duplicate removal.
+**Goal:** Improve the current `ProposedScheduler` in-place with greedy recursive ancestor duplication and conservative redundant duplicate pruning.
 
-**Important constraint:** Do not create a new scheduler class. Improve `ProposedScheduler` in-place.
+**Important constraint:** No new scheduler class created. ProposedScheduler improved in-place.
 
-**Planned improvements:**
+**Phase 15A — Greedy recursive ancestor duplication:**
+- When duplicating a direct predecessor onto a candidate processor, recursively explores that predecessor's own predecessors and duplicates them when `Delta_EFT > EPS` under the contention model
+- The recursive process is greedy (ascending task_id order, per-predecessor independent decisions) and is inspired by the recursive critical-parent duplication concept from contention-aware scheduling literature; it does not reproduce Sinnen et al. Algorithm 3 exactly
+- Ancestors already on the candidate processor are skipped; a visiting set prevents cycles
 
-1. **Recursive critical-parent duplication**
-   - Currently: only direct predecessors are considered for duplication
-   - Target: trace up the critical parent chain and duplicate ancestors that reduce EFT
-   - Must preserve `Delta_EFT > 0` rule at each duplication step
-   - Must preserve the contention-aware evaluation model
+**Phase 15B — Conservative redundant duplicate pruning:**
+- Post-schedule pass removes duplicate instances that are provably unnecessary: not a source for any materialized CommunicationInstance, and no successor on the same processor would lose its only data source
+- Conservative: if there is any doubt, the duplicate is kept
+- Does not reschedule tasks, reroute communications, shift intervals, or remove link intervals
+- Does not implement full Sinnen-style redundant task and in-edge removal
 
-2. **Redundant duplicate removal**
-   - After scheduling, identify task duplicates that no longer reduce any child's EFT
-   - Remove redundant duplicates and their associated link reservations
-   - Must preserve exactly one primary instance per original task
-   - Must preserve all correctness invariants
-
-**Files to modify:**
+**Files modified:**
 - `src/proposed_scheduler.py` — only
-- `tests/test_proposed_scheduler.py` — add tests for recursive duplication and duplicate removal
+- `tests/test_proposed_scheduler.py` — new deterministic tests for recursive duplication and pruning
 
 **What is NOT in this phase:**
 - Modifying other scheduler modules
@@ -519,65 +515,76 @@ All `TaskInstance` objects from the original state are processed in a determinis
 - Heterogeneous processor model
 
 **Validation:**
-- All existing tests for `ProposedScheduler` still pass
-- New deterministic tests verify recursive ancestor duplication
-- New deterministic tests verify redundant duplicate removal
-- Full test suite passes
+- All existing ProposedScheduler tests still pass
+- New deterministic tests verify recursive ancestor duplication behavior
+- New deterministic tests verify conservative redundant duplicate removal
+- Full test suite passed with 1039 tests after Phase 15B
 
 ---
 
 ## Phase 16 — Fair Replay Plots and Regenerated Final Diagnostic Results
 
-**Status:** Planned (not yet implemented).
+**Status:** Complete.
 
-**Goal:** Regenerate the `final_grid_small` experiment CSV with the Phase 13 replay metric columns and update plots and summary tables to include fair replay metrics for scheduler comparison.
+**Goal:** Regenerate experiment results using the Phase 15A+15B improved ProposedScheduler, add fair replay metrics, run graph family diagnostics, and produce plots and summaries.
 
-**Deliverables:**
-- Regenerated `results/raw/final_grid_small.csv` — 144 rows, now including all 6 replay columns
-- Updated `results/summary/final_grid_small_summary.md` — adds fair replay comparison tables and interpretation alongside original predicted-makespan metrics
-- Optional new plots comparing `replayed_makespan` and `replayed_speedup_vs_heft` across schedulers and CCR values
+**Active deliverables:**
+
+- `results/raw/final_grid_small_v2.csv` — **72 rows** (3 seeds × 1 task count × 2 edge probs × 3 CCR × 4×4 NoC × 4 schedulers). Reduced from planned 144 rows because n_tasks=40 caused ProposedScheduler to exceed 2 minutes per run on dense random DAGs.
+- `results/raw/graph_family_diagnostic_v1.csv` — **324 rows** (9 family configs × 3 CCR × 3 seeds × 4 schedulers). Reduced from planned 396 rows because chain family was excluded entirely: deep linear DAGs are a runtime pathology for the greedy recursive ancestor duplication.
+- `results/summary/final_grid_small_v2_summary.md` — per-scheduler metrics, CCR trend table, best-wins counts, interpretation
+- `results/summary/graph_family_diagnostic_v1_summary.md` — per-family per-scheduler metrics, family interpretation, ProposedScheduler behavior section
+- `results/summary/phase16_combined_interpretation.md` — combined analysis and final report recommendations
+- `results/plots/final_grid_small_v2/` — 20 PNGs in no_error/ and with_error/ subdirectories (10 plots each, including replay-specific plots)
+- `results/plots/graph_family_diagnostic_v1/no_error/` — 9 family bar charts
+- `scripts/run_final_experiments.py` — Experiment A driver with startup banner, per-row progress, heartbeat logging, checkpoint CSV, and completion summary
+- `scripts/run_graph_family_experiments.py` — Experiment B driver with same progress features
+- `scripts/analyze_results.py` — Combined Phase 16 interpretation generator
+
+**Grid reductions are runtime-motivated limitations, not failed or partial runs.** No NaN rows or timeout placeholder rows are present in either CSV. All included rows are complete and validated.
 
 **Key comparison enabled:**
-This phase produces the first experiment results where HEFT and CD-LS (classic model) and CA-LS and CA-D (contention-aware model) are compared on the same physical footing via `replayed_speedup_vs_heft`.
+Both experiments compare HEFT and CD-LS (classic model) against CA-LS and CA-D (contention-aware model) on the same physical footing via `replayed_speedup_vs_heft`.
 
 **Validation:**
-- Regenerated CSV contains all replay columns with no NaN values
-- HEFT rows: `replayed_speedup_vs_heft == 1.0`
-- `replay_overhead_ratio >= 0` for all rows
-- `replayed_communication_count >= communication_count` for all rows
-- Full test suite passes
+- `final_grid_small_v2.csv`: 72 rows, all invariants hold (HEFT speedup=1.0, no NaN, TIR≥1.0, utilization in [0,1])
+- `graph_family_diagnostic_v1.csv`: 324 rows, all invariants hold
+- Full test suite passed with **1039 tests**
 
 **What is NOT in this phase:**
 - Modifying scheduler algorithms
 - Changing replay semantics
-- Running experiments beyond the existing `final_grid_small` grid
 
 ---
 
 ## Phase 17 — Final Documentation and Reproducibility Cleanup
 
-**Status:** Planned (not yet implemented).
+**Status:** Complete.
 
-**Goal:** Make the project fully reproducible and ready for final submission.
+**Goal:** Make the project fully reproducible and ready for final submission. Documentation only — no algorithms modified.
 
 **Deliverables:**
-- Updated `README.md`:
-  - Project description
-  - Installation instructions
-  - Example single-run commands
-  - Example experiment commands
-  - Known limitations section
-  - Reproducibility note with seeds and configuration
-- Updated `PROJECT_CONTEXT.md` if any implementation decisions changed during Phases 11–16
-- Final test pass confirming 917+ tests (current full suite count)
-- Notes for the final report on implemented vs. deferred features
+- `README.md` — project summary, implemented schedulers, NoC model, fair replay methodology, workload generation, results reference, test command, reproduction commands, known limitations
+- `docs/methodology.md` — DAG model, NoC model, algorithm descriptions for all four schedulers, fair replay methodology
+- `docs/results_guide.md` — CSV column reference, metric explanations, native vs replay interpretation, result caveats
+- `docs/reproducibility.md` — environment setup, pip install, test command, experiment commands, expected outputs, runtime notes
+- `docs/known_limitations.md` — 11 limitations each with Impact and Possible future work
+- `docs/final_report_outline.md` — 8-section paper outline with bullet content derived from implemented system and Phase 16 results
+- `docs/phase17_checklist.md` — completion checklist and recommended human actions
+- `PROJECT_CONTEXT.md` — updated module structure, Decision Rule, Evaluation Metrics, workload parameters, Simplifications vs. Paper table
+- `PHASE_PLAN.md` — Phases 14–17 status set to Complete; stale wording removed; actual deliverables documented
+
+**What is NOT in this phase:**
+- Modifying scheduler algorithms
+- Modifying tests
+- Modifying CSV files or plots
+- Regenerating experiments
 
 **Validation:**
 
 ```bash
 python -m pytest tests/ -q
-python -m src.experiment_runner  # or equivalent CLI
-python -m src.plots --csv results/raw/final_grid_small.csv --out results/plots/final_grid_small/with_error
+# Expected: 1039 passed
 ```
 
 ---
@@ -600,7 +607,7 @@ python -m src.plots --csv results/raw/final_grid_small.csv --out results/plots/f
 | 11 | Final Experiments | `final_grid_small` diagnostic CSV, plots, summary | Complete |
 | 12 | Fair Contention Replay | `contention_replay.py`, 60 tests | Complete |
 | 13 | Fair Replay Metrics | Replay columns in experiment runner, 30 tests | Complete |
-| 14 | Graph Families | `src/graph_families.py`, benchmark generators | Planned |
-| 15 | Improve ProposedScheduler | Recursive duplication, redundant removal | Planned |
-| 16 | Fair Replay Plots / Regeneration | Regenerated CSV + replay comparison plots | Planned |
-| 17 | Final Documentation | README, reproducibility, final cleanup | Planned |
+| 14 | Graph Family Generators | `src/graph_families.py`, 7 family generators, `tests/test_graph_families.py` | Complete |
+| 15 | Improve ProposedScheduler | Greedy recursive ancestor duplication (15A) + conservative pruning (15B), 1039 tests | Complete |
+| 16 | Fair Replay Plots and Regenerated Results | `final_grid_small_v2.csv` (72 rows), `graph_family_diagnostic_v1.csv` (324 rows), plots, summaries | Complete |
+| 17 | Final Documentation | README, docs/methodology, docs/results_guide, docs/reproducibility, docs/known_limitations, docs/final_report_outline | Complete |
