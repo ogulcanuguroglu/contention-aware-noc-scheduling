@@ -51,6 +51,26 @@ Greedy recursive ancestor duplication (_place_recursive_duplicate):
     Ancestors already on P are skipped.  A visiting set prevents revisiting
     tasks already in the current recursion chain.
 
+Conservative redundant duplicate removal (_prune_redundant_duplicates):
+    After the full schedule is constructed, a single post-schedule pass
+    removes duplicate instances that are provably unnecessary under the
+    materialized schedule.  A duplicate is removed only when all four
+    conditions hold simultaneously:
+      A. is_primary == False.
+      B. At least one other instance of the same task remains.
+      C. No CommunicationInstance uses it as a source
+         (ci.source_task == task_id AND ci.source_processor == processor_id).
+      D. No remaining task instance of any successor on the same processor
+         would lose required data availability: each such instance still has
+         either a local predecessor instance (finish_time within _EPS) or a
+         materialized CommunicationInstance satisfying the dependency.
+    The pass is conservative: if there is any doubt, the duplicate is kept.
+    It does not reschedule tasks, reroute communications, shift task
+    intervals, create new intervals, or remove link intervals.  It does not
+    implement full Sinnen-style redundant task and in-edge removal.
+    Removal order: descending finish_time, descending start_time, then
+    ascending task_id, ascending processor_id.
+
 Best-instance selection:
     When a predecessor has multiple instances (primary + earlier dups), all
     instances are evaluated.  For local instances, arrival = finish_time.
@@ -74,8 +94,11 @@ Communication reservation order:
 Limitations:
     - Greedy recursive ancestor placement is not guaranteed to find the
       globally optimal ancestor chain.
-    - Redundant duplicate removal is not implemented; duplicated instances
-      that no longer reduce any child task's EFT remain in the schedule.
+    - Conservative redundant duplicate removal (_prune_redundant_duplicates)
+      removes only instances that are provably unused under the materialized
+      schedule.  Duplicates that are technically removable only after
+      rerouting communications are kept.  Full Sinnen-style redundant task
+      and in-edge removal is not implemented.
 """
 
 import math
@@ -95,7 +118,8 @@ class ProposedScheduler:
 
     Combines contention-aware link-level communication reservation with
     selective task duplication using greedy recursive ancestor placement
-    inspired by critical-parent recursive duplication.  Uses
+    inspired by critical-parent recursive duplication, followed by a
+    conservative post-schedule redundant duplicate removal pass.  Uses
     HEFT-compatible upward-rank priority.
 
     Args:
@@ -151,9 +175,10 @@ class ProposedScheduler:
         their dup instances and communication reservations never pollute the
         committed final state.
 
-        Returns a ScheduleState with all task intervals committed and all
+        Returns a ScheduleState with all task intervals committed, all
         selected remote communications represented by CommunicationInstance
-        objects with reserved link intervals.
+        objects with reserved link intervals, and provably unnecessary
+        duplicate instances removed by the conservative pruning pass.
         """
         self._validate_dag(dag)
         state = ScheduleState(self.noc)
@@ -200,6 +225,7 @@ class ProposedScheduler:
             state = best_candidate
             scheduled.add(task_id)
 
+        state = self._prune_redundant_duplicates(dag, state)
         return state
 
     def evaluate_task_on_processor(
@@ -342,6 +368,148 @@ class ProposedScheduler:
             processor_id, comp_cost, not_before=drt_final
         )
         return start_final, start_final + comp_cost
+
+    def _prune_redundant_duplicates(
+        self,
+        dag: DAGGraph,
+        state: ScheduleState,
+    ) -> ScheduleState:
+        """
+        Conservative post-schedule pass: remove provably unnecessary duplicate
+        task instances from state.
+
+        Called once at the end of schedule(), after all tasks are committed.
+        Must not be called during candidate evaluation or inside
+        _place_recursive_duplicate.
+
+        Removability conditions (all must hold simultaneously):
+          A. is_primary == False.
+          B. At least one other instance of the same task exists after removal.
+          C. No CommunicationInstance uses this instance as its source
+             (ci.source_task == task_id AND ci.source_processor == processor_id).
+          D. No remaining task instance of a successor on the same processor
+             would lose required data after removal:
+             for each successor T of task_id, for each instance of T on
+             processor_id, at least one of these holds after removal:
+               (a) another instance of task_id on processor_id with
+                   finish_time <= succ.start_time + _EPS remains, OR
+               (b) a CommunicationInstance satisfies the dependency:
+                   source_task == task_id, target_task == T,
+                   destination_processor == processor_id,
+                   finish_time <= succ.start_time + _EPS.
+
+        Removal order: descending finish_time, descending start_time, then
+        ascending task_id, ascending processor_id.  Removing later/tail
+        duplicates first can reduce makespan when the tail duplicate was the
+        last interval on its processor.
+
+        Does NOT:
+          - reschedule tasks or shift task intervals,
+          - reroute communications or remove communication/link intervals,
+          - implement full Sinnen-style redundant task and in-edge removal.
+
+        Returns state (mutated in place).
+        """
+        candidates = [
+            inst
+            for instances in state.task_instances.values()
+            for inst in instances
+            if not inst.is_primary
+        ]
+        candidates.sort(
+            key=lambda i: (-i.finish_time, -i.start_time, i.task_id, i.processor_id)
+        )
+
+        for inst in candidates:
+            if self._can_remove_duplicate(dag, state, inst):
+                self._remove_task_instance_in_place(state, inst)
+
+        state.validate_no_overlaps()
+        return state
+
+    @staticmethod
+    def _can_remove_duplicate(
+        dag: DAGGraph,
+        state: ScheduleState,
+        inst: object,
+    ) -> bool:
+        """
+        Return True when inst satisfies all four removability conditions A–D.
+
+        Evaluates against the current state (which may have changed from
+        earlier removals in the same pruning pass).
+        """
+        # A: must be a duplicate
+        if inst.is_primary:
+            return False
+
+        # B: at least one other instance of the same task remains
+        all_instances = state.task_instances.get(inst.task_id, [])
+        if sum(1 for i in all_instances if i is not inst) == 0:
+            return False
+
+        # C: not used as source of any materialized communication
+        for ci in state.communication_instances:
+            if (ci.source_task == inst.task_id
+                    and ci.source_processor == inst.processor_id):
+                return False
+
+        # D: no successor instance on the same processor loses data after removal
+        for succ_tid in dag.successors(inst.task_id):
+            for succ_inst in state.task_instances.get(succ_tid, []):
+                if succ_inst.processor_id != inst.processor_id:
+                    continue
+                # (a) another instance of inst.task_id on same processor
+                other_local = any(
+                    i is not inst
+                    and i.processor_id == inst.processor_id
+                    and i.finish_time <= succ_inst.start_time + _EPS
+                    for i in all_instances
+                )
+                if other_local:
+                    continue
+                # (b) a materialized CommunicationInstance covers the dependency
+                comm_ok = any(
+                    ci.source_task == inst.task_id
+                    and ci.target_task == succ_tid
+                    and ci.destination_processor == inst.processor_id
+                    and ci.finish_time <= succ_inst.start_time + _EPS
+                    for ci in state.communication_instances
+                )
+                if not comm_ok:
+                    return False
+
+        return True
+
+    @staticmethod
+    def _remove_task_instance_in_place(
+        state: ScheduleState,
+        inst: object,
+    ) -> None:
+        """
+        Remove inst from state.task_instances and the corresponding Interval
+        from state.processor_intervals.
+
+        Uses identity comparison to avoid removing a different instance with
+        identical field values.  Does not touch communication_instances or
+        link_intervals.
+        """
+        # Remove from task_instances using identity
+        state.task_instances[inst.task_id] = [
+            i for i in state.task_instances[inst.task_id] if i is not inst
+        ]
+
+        # Remove the matching Interval from processor_intervals.
+        # start_time is unique per processor (no overlaps), so the match is unique.
+        state.processor_intervals[inst.processor_id] = [
+            iv for iv in state.processor_intervals[inst.processor_id]
+            if not (
+                iv.start_time == inst.start_time
+                and iv.finish_time == inst.finish_time
+                and isinstance(iv.metadata, dict)
+                and iv.metadata.get("task_id") == inst.task_id
+            )
+        ]
 
     def _place_recursive_duplicate(
         self,
