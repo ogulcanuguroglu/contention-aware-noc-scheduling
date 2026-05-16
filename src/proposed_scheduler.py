@@ -382,16 +382,12 @@ class ProposedScheduler:
                     arrival = inst.finish_time
                     is_local = True
                 else:
-                    probe = candidate.clone()
-                    ci = probe.reserve_communication(
-                        source_task=pred,
-                        target_task=task_id,
+                    arrival = candidate.probe_communication_arrival(
                         source_processor=inst.processor_id,
                         destination_processor=processor_id,
                         ready_time=inst.finish_time,
                         communication_volume=vol,
                     )
-                    arrival = ci.finish_time
                     is_local = False
 
                 if self._is_better_instance(
@@ -456,16 +452,12 @@ class ProposedScheduler:
                     arrival = inst.finish_time
                     is_local = True
                 else:
-                    probe = candidate.clone()
-                    ci = probe.reserve_communication(
-                        source_task=gp,
-                        target_task=pred_id,
+                    arrival = candidate.probe_communication_arrival(
                         source_processor=inst.processor_id,
                         destination_processor=processor_id,
                         ready_time=inst.finish_time,
                         communication_volume=vol,
                     )
-                    arrival = ci.finish_time
                     is_local = False
 
                 if self._is_better_instance(
