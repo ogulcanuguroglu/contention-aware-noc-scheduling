@@ -7,8 +7,9 @@ duplication under contention, Delta_EFT tie, existing duplicate instance
 selection, grandparent communication for dup placement, candidate isolation,
 link interval integrity, recursive critical-parent duplication, baseline
 comparison, makespan, input validation, synthetic DAG sanity, local-instance
-tie preference, insertion-order determinism, and graph-family compatibility.
-Phases 8 and 15A.
+tie preference, insertion-order determinism, graph-family compatibility,
+_is_better_instance tie handling, and conservative redundant duplicate removal.
+Phases 8, 15A, and 15B.
 
 Coordinate system (2×2 mesh, row-major: pid = y*cols + x):
     P0=(x=0,y=0)  P1=(x=1,y=0)
@@ -1563,3 +1564,275 @@ class TestIsBetterInstanceTieHandling:
             arrival=10.0, is_local=False, inst_proc=3,
             best_arrival=math.inf, best_is_local=False, best_proc=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# 27. Conservative redundant duplicate removal (Phase 15B)
+# ---------------------------------------------------------------------------
+
+class TestRedundantDuplicateRemoval:
+    """
+    Tests for ProposedScheduler._prune_redundant_duplicates (Phase 15B).
+
+    Pruning is called automatically at the end of schedule().
+    Tests that call _prune_redundant_duplicates directly use manually
+    constructed ScheduleState objects to precisely control which duplicates
+    are present and whether they should be removed.
+
+    Removability conditions A–D (all must hold):
+      A. is_primary == False.
+      B. At least one other instance of the same task remains.
+      C. No CommunicationInstance uses it as source (source_task == task_id
+         AND source_processor == processor_id).
+      D. No successor instance on the same processor would lose data.
+    """
+
+    @staticmethod
+    def _chain_dag_2task(vol: float = 10.0) -> DAGGraph:
+        """0→1 with given communication volume."""
+        g = nx.DiGraph()
+        g.add_node(0, computation_cost=10.0)
+        g.add_node(1, computation_cost=10.0)
+        g.add_edge(0, 1, communication_volume=vol)
+        return DAGGraph(g)
+
+    # ------------------------------------------------------------------
+    # Test 1: unused tail duplicate is pruned
+    # ------------------------------------------------------------------
+
+    def test_prunes_unused_tail_duplicate(self):
+        """
+        DAG: 0→1.  State: task0 primary P0[0,10], task1 primary P0[10,20],
+        task0 dup P1[30,40] (unused: no successor on P1, no CI from P1).
+
+        After pruning: dup removed, makespan falls from 40 to 20.
+        """
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task()
+        state = make_state(noc)
+        state.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state.reserve_task(1, 0, 10.0, 20.0, is_primary=True)
+        state.reserve_task(0, 1, 30.0, 40.0, is_primary=False)  # unused dup
+
+        original_makespan = state.max_processor_finish_time()  # 40.0
+        ps._prune_redundant_duplicates(dag, state)
+
+        assert not state.has_task_instance(0, 1), "unused dup must be removed"
+        assert state.has_task_instance(0, 0), "primary of task0 must remain"
+        assert state.has_task_instance(1, 0), "task1 must remain"
+        assert state.max_processor_finish_time() == pytest.approx(20.0)
+        assert state.max_processor_finish_time() <= original_makespan + 1e-9
+        state.validate_no_overlaps()
+
+    # ------------------------------------------------------------------
+    # Test 2: primaries are never removed
+    # ------------------------------------------------------------------
+
+    def test_does_not_remove_primary(self):
+        """State with only primaries: pruning changes nothing."""
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task()
+        state = make_state(noc)
+        state.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state.reserve_task(1, 0, 10.0, 20.0, is_primary=True)
+
+        ps._prune_redundant_duplicates(dag, state)
+
+        assert state.get_primary_instance(0).processor_id == 0
+        assert state.get_primary_instance(1).processor_id == 0
+        assert len(state.get_task_instances(0)) == 1
+        assert len(state.get_task_instances(1)) == 1
+
+    # ------------------------------------------------------------------
+    # Test 3: dup providing local data to a successor is kept (condition D)
+    # ------------------------------------------------------------------
+
+    def test_does_not_remove_dup_used_for_local_successor(self):
+        """
+        DAG: 0→1.  task0 primary P0[0,10], task0 dup P1[0,10], task1 primary P1[10,20].
+        task1@P1 depends on local task0_dup@P1.  No CommunicationInstance exists.
+
+        Condition D: after removing task0_dup@P1, task1@P1 has no local data
+        from task0 and no CI → removal blocked.  Dup must remain.
+        """
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task()
+        state = make_state(noc)
+        state.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state.reserve_task(0, 1, 0.0, 10.0, is_primary=False)  # local source for task1@P1
+        state.reserve_task(1, 1, 10.0, 20.0, is_primary=True)
+
+        ps._prune_redundant_duplicates(dag, state)
+
+        assert state.has_task_instance(0, 1), "dup of task0 on P1 must not be removed"
+        assert len(state.get_task_instances(0)) == 2
+        state.validate_no_overlaps()
+
+    # ------------------------------------------------------------------
+    # Test 4: dup used as remote source of a CommunicationInstance is kept (condition C)
+    # ------------------------------------------------------------------
+
+    def test_does_not_remove_dup_used_as_remote_source(self):
+        """
+        DAG: 0→1 (vol=10).  task0 primary P0[0,10], task0 dup P1[0,10].
+        task1 primary P2[20,30].  A CommunicationInstance exists from
+        task0_dup@P1 → task1@P2 (reserved via reserve_communication).
+
+        Condition C: CI source_task=0, source_processor=P1 → removal blocked.
+        """
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task(vol=10.0)
+        state = make_state(noc)
+        state.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state.reserve_task(0, 1, 0.0, 10.0, is_primary=False)
+        state.reserve_task(1, 2, 20.0, 30.0, is_primary=True)
+        # Route P1→P2 in 2×2 XY: [Link(1,0), Link(0,2)], duration=vol=10
+        state.reserve_communication(
+            source_task=0, target_task=1,
+            source_processor=1, destination_processor=2,
+            ready_time=10.0, communication_volume=10.0,
+        )
+
+        ci_count_before = len(state.communication_instances)
+        ps._prune_redundant_duplicates(dag, state)
+
+        assert state.has_task_instance(0, 1), "dup of task0 on P1 must not be removed"
+        assert len(state.communication_instances) == ci_count_before
+        state.validate_no_overlaps()
+
+    # ------------------------------------------------------------------
+    # Test 5: pruning is idempotent
+    # ------------------------------------------------------------------
+
+    def test_pruning_is_idempotent(self):
+        """Calling pruning twice produces the same task instance set."""
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task()
+        state = make_state(noc)
+        state.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state.reserve_task(1, 0, 10.0, 20.0, is_primary=True)
+        state.reserve_task(0, 1, 30.0, 40.0, is_primary=False)  # unused dup
+
+        ps._prune_redundant_duplicates(dag, state)
+        snapshot_after_first = {
+            tid: sorted(
+                (i.processor_id, i.start_time, i.finish_time, i.is_primary)
+                for i in insts
+            )
+            for tid, insts in state.task_instances.items()
+        }
+
+        ps._prune_redundant_duplicates(dag, state)
+        snapshot_after_second = {
+            tid: sorted(
+                (i.processor_id, i.start_time, i.finish_time, i.is_primary)
+                for i in insts
+            )
+            for tid, insts in state.task_instances.items()
+        }
+
+        assert snapshot_after_first == snapshot_after_second
+        state.validate_no_overlaps()
+
+    # ------------------------------------------------------------------
+    # Test 6: full schedule keeps exactly one primary per task
+    # ------------------------------------------------------------------
+
+    def test_full_schedule_one_primary_per_task(self):
+        """After schedule() (which includes pruning), one primary per task."""
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        state = ps.schedule(_forced_dup_dag())
+        for tid in _forced_dup_dag().task_ids():
+            primaries = [i for i in state.get_task_instances(tid) if i.is_primary]
+            assert len(primaries) == 1
+        state.validate_no_overlaps()
+
+    # ------------------------------------------------------------------
+    # Test 7: pruning does not increase makespan
+    # ------------------------------------------------------------------
+
+    def test_pruning_does_not_increase_makespan(self):
+        """
+        Manual state with an unused tail dup: pruning reduces makespan.
+        Manual state without unused dups: pruning leaves makespan unchanged.
+        In both cases pruned makespan <= original makespan.
+        """
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task()
+
+        # Case A: unused tail dup → makespan reduced
+        state_a = make_state(noc)
+        state_a.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state_a.reserve_task(1, 0, 10.0, 20.0, is_primary=True)
+        state_a.reserve_task(0, 1, 30.0, 40.0, is_primary=False)
+        original_ms_a = state_a.max_processor_finish_time()
+        ps._prune_redundant_duplicates(dag, state_a)
+        assert state_a.max_processor_finish_time() <= original_ms_a + 1e-9
+        assert state_a.max_processor_finish_time() == pytest.approx(20.0)
+
+        # Case B: no unused dups → makespan unchanged
+        state_b = make_state(noc)
+        state_b.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state_b.reserve_task(0, 1, 0.0, 10.0, is_primary=False)
+        state_b.reserve_task(1, 1, 10.0, 20.0, is_primary=True)
+        original_ms_b = state_b.max_processor_finish_time()
+        ps._prune_redundant_duplicates(dag, state_b)
+        assert state_b.max_processor_finish_time() <= original_ms_b + 1e-9
+
+    # ------------------------------------------------------------------
+    # Test 8: CI count is unchanged when dup is a remote source
+    # ------------------------------------------------------------------
+
+    def test_pruning_preserves_remote_communications(self):
+        """communication_instances list is unchanged when dup is a CI source."""
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        dag = self._chain_dag_2task(vol=10.0)
+        state = make_state(noc)
+        state.reserve_task(0, 0, 0.0, 10.0, is_primary=True)
+        state.reserve_task(0, 1, 0.0, 10.0, is_primary=False)
+        state.reserve_task(1, 2, 20.0, 30.0, is_primary=True)
+        state.reserve_communication(
+            source_task=0, target_task=1,
+            source_processor=1, destination_processor=2,
+            ready_time=10.0, communication_volume=10.0,
+        )
+
+        ci_count_before = len(state.communication_instances)
+        ps._prune_redundant_duplicates(dag, state)
+        assert len(state.communication_instances) == ci_count_before
+
+    # ------------------------------------------------------------------
+    # Test 9: regression — forced-dup DAG necessary dup is not pruned
+    # ------------------------------------------------------------------
+
+    def test_forced_dup_dag_necessary_dup_kept(self):
+        """
+        _forced_dup_dag() forces a dup that provides local data to task2.
+        After schedule() (which calls pruning), the dup must still exist:
+        task2's primary depends on it locally and no CI can replace it.
+        """
+        noc = make_noc(rows=2, cols=2, alpha=0.0, beta=1.0)
+        ps = ProposedScheduler(noc)
+        state = ps.schedule(_forced_dup_dag())
+
+        total_instances = sum(
+            len(state.get_task_instances(tid))
+            for tid in _forced_dup_dag().task_ids()
+        )
+        assert total_instances > _forced_dup_dag().number_of_tasks(), (
+            "necessary dup must remain after pruning"
+        )
+        # Structural invariants still hold
+        for tid in _forced_dup_dag().task_ids():
+            primaries = [i for i in state.get_task_instances(tid) if i.is_primary]
+            assert len(primaries) == 1
+        state.validate_no_overlaps()
+        assert state.communication_instances == []  # all data local
