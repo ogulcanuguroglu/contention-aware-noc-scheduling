@@ -42,13 +42,16 @@ Duplication rule (per predecessor, evaluated sequentially):
 Best-instance selection:
     When a predecessor has multiple instances (primary + earlier dups), all
     instances are evaluated.  For local instances, arrival = finish_time.
-    For remote instances, arrival is determined by probing via a sub-clone.
-    The winning instance is chosen by three-way priority (_is_better_instance):
+    For remote instances, arrival is computed read-only via
+    candidate.probe_communication_arrival(); no sub-clone is created per
+    remote instance.  The winning instance is chosen by three-way priority
+    (_is_better_instance):
       1. Smallest arrival time.
       2. Local over remote when arrivals are equal (avoids unnecessary comm
          reservation on NoC links).
       3. Smallest source processor_id as the final deterministic tie-break.
-    Only the winning instance's communication (if remote) is committed.
+    Only the winning instance's communication (if remote) is then committed
+    to the state via reserve_communication().
 
 Communication reservation order:
     Within both _contention_drt and _dup_drt_contention, predecessor (or
@@ -228,8 +231,10 @@ class ProposedScheduler:
         For each predecessor, all available instances are evaluated:
           - Local instance (same processor): arrival = instance.finish_time,
             no CommunicationInstance or link interval is created.
-          - Remote instance: probed via a sub-clone of state; the selected
-            (earliest-arriving) remote instance's comm is committed to state.
+          - Remote instance: arrival computed read-only via
+            probe_communication_arrival(); no sub-clone per remote instance.
+            The selected (earliest-arriving) remote instance's comm is then
+            committed to state via reserve_communication().
 
         When both local and remote instances exist for a predecessor, the
         one giving the earliest arrival is selected.
@@ -355,11 +360,11 @@ class ProposedScheduler:
         the winner via _is_better_instance (arrival → local preference →
         smaller processor_id):
           - Local instance: arrival = finish_time (no comm created).
-          - Remote instance: probed via a sub-clone of candidate; arrival =
-            comm.finish_time from the probe.
+          - Remote instance: arrival computed read-only via
+            candidate.probe_communication_arrival(); no sub-clone created.
 
         The selected instance's communication (if remote) is committed to
-        candidate.  Local arrivals commit nothing.
+        candidate via reserve_communication().  Local arrivals commit nothing.
 
         Returns 0.0 for entry tasks.
         Raises ValueError if any predecessor has no instances in candidate.
@@ -426,10 +431,11 @@ class ProposedScheduler:
 
         Grandparent task IDs are iterated in ascending sorted order for
         determinism.  Uses committed instances of pred_id's own predecessors
-        (grandparents of the original task).  Reserves selected grandparent
-        communications into candidate via _is_better_instance (arrival →
-        local preference → smaller processor_id).  No recursive ancestor
-        duplication is attempted (Phase 8 scope).
+        (grandparents of the original task).  Remote grandparent arrivals are
+        computed read-only via probe_communication_arrival(); no sub-clone per
+        remote instance.  The winning grandparent communication (if remote) is
+        committed to candidate via reserve_communication().  No recursive
+        ancestor duplication is attempted (Phase 8 scope).
 
         Returns 0.0 if pred_id has no predecessors (entry task).
         Raises ValueError if any grandparent has no instances in candidate.

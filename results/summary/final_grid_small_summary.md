@@ -1,5 +1,7 @@
 # Final Grid Small: Experiment Results Summary
 
+> **Note**: This is a small diagnostic grid used for Phase 11 validation. It should not be presented as the full final evaluation grid. The broader methodology and paper alignment are defined in results/summary/project_alignment_audit.md.
+
 ## 1. Experiment Configuration
 
 | Parameter | Value |
@@ -96,5 +98,8 @@ without duplication.
   (very large DAGs, dense graphs, or CCR > 5).
 - **Fixed NoC size**: Only the 4x4 mesh was tested. Larger meshes would
   increase contention and potentially widen the advantage of CA-D.
-- **alpha=0.0**: The link traversal latency term is disabled; communication
-  cost is proportional to volume only (beta * volume * hop_count).
+- **alpha=0.0**: The per-hop latency term is disabled. The communication
+  duration formula is `alpha * hop_count + beta * volume`; with alpha=0.0
+  this reduces to `beta * volume`. Hop count still determines the XY route
+  and the number of reserved NoC links, but it does not multiply the
+  bandwidth term beta * volume.
