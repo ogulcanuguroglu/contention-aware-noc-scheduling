@@ -62,14 +62,20 @@ entirely. CD-LS produces the shortest makespans most often (20 of 36 workload
 instances) and achieves speedup > 1.0 at CCR >= 1.0. Its advantage grows with
 CCR: 1.087x speedup at CCR=5.0. The classic communication model it uses
 (no link reservation) is optimistic but enables aggressive duplication.
+Note: CD-LS communication_count is 0 because the classical scheduler computes
+communication costs analytically and does not materialize CommunicationInstance
+or link-reservation objects. Logical DAG communications still exist and are
+factored into EFT estimates; they simply have no link-interval representation.
 
 **CA-D (Proposed)** combines contention-aware reservation with selective
-parent duplication (Delta_EFT > 0 rule). It avoids duplications that do not
-improve EFT under the realistic link model. As a result, it duplicates more
-conservatively than CD-LS and also incurs communication reservation overhead.
-On this small grid, CA-D has mean speedup 0.957 -- slightly below HEFT. This
-is expected: CA-D's honest contention model makes its makespan longer than
-HEFT's optimistic estimate, but CA-D schedules more realistically.
+parent duplication (Delta_EFT > 0 rule under the contention model). On this
+small grid, CA-D has a mean task_instance_ratio of 1.308, which is higher than
+CD-LS (1.237). The extra duplications do not translate into lower makespan
+because CA-D also models and reserves link-level communications realistically,
+including the communications required to place duplicate tasks. The reservation
+overhead prevents CA-D from matching CD-LS's optimistic makespan on this
+diagnostic grid. CA-D remains between CA-LS and CD-LS in makespan at high CCR,
+but does not beat HEFT on this small diagnostic grid (mean speedup 0.957).
 
 **Model comparison note**: HEFT and CD-LS use the classic model (no link
 reservation), so their reported makespans are optimistic estimates of actual
