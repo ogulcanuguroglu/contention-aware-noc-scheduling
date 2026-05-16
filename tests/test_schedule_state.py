@@ -701,6 +701,39 @@ class TestClone:
         # Clone should still have only 1 communication instance
         assert len(clone.communication_instances) == 1
 
+    def test_clone_processor_interval_lists_are_distinct_objects(self):
+        state = make_state()
+        _reserve(state, 0, 0, 0.0, 10.0)
+        clone = state.clone()
+        for pid in state.processor_intervals:
+            assert clone.processor_intervals[pid] is not state.processor_intervals[pid], (
+                f"processor_intervals[{pid}] is the same list object in clone and original"
+            )
+
+    def test_clone_link_interval_lists_are_distinct_objects(self):
+        state = make_state()
+        state.reserve_communication(0, 1, 0, 5, 0.0, 1.0)
+        clone = state.clone()
+        for link in state.link_intervals:
+            assert clone.link_intervals[link] is not state.link_intervals[link], (
+                f"link_intervals[{link}] is the same list object in clone and original"
+            )
+
+    def test_clone_task_instance_lists_are_distinct_objects(self):
+        state = make_state()
+        _reserve(state, 0, 0, 0.0, 10.0)
+        clone = state.clone()
+        for tid in state.task_instances:
+            assert clone.task_instances[tid] is not state.task_instances[tid], (
+                f"task_instances[{tid}] is the same list object in clone and original"
+            )
+
+    def test_clone_communication_instances_list_is_distinct_object(self):
+        state = make_state()
+        state.reserve_communication(0, 1, 0, 5, 0.0, 1.0)
+        clone = state.clone()
+        assert clone.communication_instances is not state.communication_instances
+
 
 # ---------------------------------------------------------------------------
 # 10. validate_no_overlaps
@@ -746,3 +779,109 @@ class TestValidateNoOverlaps:
         state.link_intervals[Link(0, 1)].append(Interval(start_time=0.0, finish_time=10.0))
         state.link_intervals[Link(0, 1)].append(Interval(start_time=5.0, finish_time=5.0))
         state.validate_no_overlaps()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# 11. probe_communication_arrival — regression tests for Phase 11 fix
+# ---------------------------------------------------------------------------
+
+class TestProbeCommunicationArrival:
+    """
+    Regression tests for ScheduleState.probe_communication_arrival().
+
+    Verifies that:
+    - the method is read-only (does not mutate communication_instances or
+      link_intervals),
+    - the returned arrival time matches what reserve_communication() would
+      produce on a clone of the same state,
+    - local (same-processor) communication returns ready_time immediately,
+    - probing on a state with an existing reservation on the route yields a
+      later slot than probing on an empty state.
+    """
+
+    def test_does_not_create_communication_instance(self):
+        state = make_state()
+        _reserve(state, 0, 0, 0.0, 5.0)
+        before = len(state.communication_instances)
+        state.probe_communication_arrival(0, 5, 0.0, 1.0)
+        assert len(state.communication_instances) == before
+
+    def test_does_not_mutate_link_intervals(self):
+        state = make_state()
+        snapshot = {link: len(ivs) for link, ivs in state.link_intervals.items()}
+        state.probe_communication_arrival(0, 15, 0.0, 1.0)
+        for link, count in snapshot.items():
+            assert len(state.link_intervals[link]) == count, (
+                f"link_intervals[{link}] changed after probe"
+            )
+
+    def test_matches_reserve_communication_finish_time(self):
+        state = make_state()
+        arrival_probe = state.probe_communication_arrival(
+            source_processor=0,
+            destination_processor=5,
+            ready_time=0.0,
+            communication_volume=1.0,
+        )
+        clone = state.clone()
+        ci = clone.reserve_communication(
+            source_task=0,
+            target_task=1,
+            source_processor=0,
+            destination_processor=5,
+            ready_time=0.0,
+            communication_volume=1.0,
+        )
+        assert arrival_probe == pytest.approx(ci.finish_time)
+
+    def test_matches_reserve_communication_with_prior_reservation(self):
+        state = make_state()
+        state.reserve_communication(0, 1, 0, 5, 0.0, 1.0)
+        arrival_probe = state.probe_communication_arrival(
+            source_processor=0,
+            destination_processor=5,
+            ready_time=0.0,
+            communication_volume=1.0,
+        )
+        clone = state.clone()
+        ci = clone.reserve_communication(
+            source_task=2,
+            target_task=3,
+            source_processor=0,
+            destination_processor=5,
+            ready_time=0.0,
+            communication_volume=1.0,
+        )
+        assert arrival_probe == pytest.approx(ci.finish_time)
+
+    def test_local_communication_returns_ready_time(self):
+        state = make_state()
+        arrival = state.probe_communication_arrival(3, 3, 7.5, 100.0)
+        assert arrival == pytest.approx(7.5)
+
+    def test_congested_route_gives_later_arrival_than_empty(self):
+        # Reserve a communication on the 0->1 route, then probe the same route.
+        state_busy = make_state()
+        state_busy.reserve_communication(0, 1, 0, 1, 0.0, 1.0)
+        arrival_busy = state_busy.probe_communication_arrival(0, 1, 0.0, 1.0)
+
+        state_free = make_state()
+        arrival_free = state_free.probe_communication_arrival(0, 1, 0.0, 1.0)
+
+        assert arrival_busy > arrival_free
+
+    def test_rejects_invalid_source_processor(self):
+        with pytest.raises(ValueError):
+            make_state().probe_communication_arrival(99, 1, 0.0, 1.0)
+
+    def test_rejects_invalid_destination_processor(self):
+        with pytest.raises(ValueError):
+            make_state().probe_communication_arrival(0, 99, 0.0, 1.0)
+
+    def test_rejects_negative_ready_time(self):
+        with pytest.raises(ValueError):
+            make_state().probe_communication_arrival(0, 5, -1.0, 1.0)
+
+    def test_rejects_negative_volume(self):
+        with pytest.raises(ValueError):
+            make_state().probe_communication_arrival(0, 5, 0.0, -1.0)
