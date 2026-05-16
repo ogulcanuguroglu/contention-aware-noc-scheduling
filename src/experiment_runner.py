@@ -45,10 +45,11 @@ import pandas as pd
 import yaml
 
 from src.classical_dup_scheduler import ClassicalDuplicationScheduler
+from src.contention_replay import replay_under_contention
 from src.contention_scheduler import ContentionAwareScheduler
 from src.dag_generator import compute_ccr, generate_dag
 from src.heft_scheduler import HEFTScheduler
-from src.metrics import schedule_summary, speedup
+from src.metrics import max_link_utilization, schedule_summary, speedup
 from src.models import DAGGraph
 from src.noc import MeshNoC
 from src.proposed_scheduler import ProposedScheduler
@@ -179,6 +180,67 @@ def add_relative_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_replay_relative_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add HEFT-replayed-makespan-relative metrics to an experiment result DataFrame.
+
+    For each workload configuration and seed (grouped by _GROUPBY_COLS), the
+    row where scheduler == "heft" is used as the fair replay baseline makespan.
+
+    Adds one column:
+        replayed_speedup_vs_heft  — heft_replayed_makespan / row.replayed_makespan
+
+    Special cases:
+        Both HEFT and row replayed_makespan are 0: speedup = 1.0.
+        HEFT replayed_makespan is 0 but row > 0: raises ValueError.
+
+    Requires column "replayed_makespan" to be present in df.
+    Raises ValueError if any workload group is missing a HEFT row or has > 1.
+    """
+    if "heft" not in df["scheduler"].values:
+        raise ValueError(
+            "No 'heft' rows found in DataFrame: cannot compute replay-relative metrics."
+        )
+
+    baseline_map: dict[tuple, float] = {}
+    for group_key, group in df.groupby(_GROUPBY_COLS, sort=False):
+        heft_rows = group[group["scheduler"] == "heft"]
+        if len(heft_rows) == 0:
+            raise ValueError(
+                f"No HEFT baseline row found for workload group: {group_key}"
+            )
+        if len(heft_rows) > 1:
+            raise ValueError(
+                f"Multiple HEFT baseline rows ({len(heft_rows)}) found "
+                f"for workload group: {group_key}"
+            )
+        key = group_key if isinstance(group_key, tuple) else (group_key,)
+        baseline_map[key] = float(heft_rows.iloc[0]["replayed_makespan"])
+
+    df = df.copy()
+    speedup_col: list[float] = []
+
+    for _, row in df.iterrows():
+        key = tuple(row[col] for col in _GROUPBY_COLS)
+        baseline = baseline_map[key]
+        row_ms = float(row["replayed_makespan"])
+
+        if baseline == 0.0 and row_ms > 0.0:
+            raise ValueError(
+                f"HEFT replayed_makespan is 0.0 but row replayed_makespan is "
+                f"{row_ms}: replayed_speedup_vs_heft is undefined"
+            )
+        if baseline == 0.0:
+            spd = 1.0
+        else:
+            spd = speedup(baseline, row_ms)
+
+        speedup_col.append(spd)
+
+    df["replayed_speedup_vs_heft"] = speedup_col
+    return df
+
+
 def run_single_experiment(
     scheduler_name: str,
     n_tasks: int,
@@ -237,6 +299,14 @@ def run_single_experiment(
     achieved = compute_ccr(g)
     serial_spd = speedup(total_computation_work, summary["makespan"])
 
+    replayed_state = replay_under_contention(dag, state, noc)
+    replayed_ms = float(replayed_state.max_processor_finish_time())
+    original_ms = float(summary["makespan"])
+    replay_comm_count = len(replayed_state.communication_instances)
+    replay_max_lu = max_link_utilization(replayed_state, replayed_ms)
+    replay_overhead = replayed_ms / original_ms if original_ms > 0.0 else 1.0
+    replay_delta = replayed_ms - original_ms
+
     return {
         "scheduler": scheduler_name,
         "n_tasks": n_tasks,
@@ -255,6 +325,11 @@ def run_single_experiment(
         "total_computation_work": total_computation_work,
         "serial_speedup": serial_spd,
         **summary,
+        "replayed_makespan": replayed_ms,
+        "replayed_communication_count": replay_comm_count,
+        "replayed_max_link_utilization": replay_max_lu,
+        "replay_overhead_ratio": replay_overhead,
+        "replayed_vs_original_delta": replay_delta,
     }
 
 
@@ -266,7 +341,8 @@ def run_experiment_grid(config: dict) -> pd.DataFrame:
     (via itertools.product for full Cartesian product).
 
     After all runs complete, add_relative_metrics() is called to append
-    HEFT-relative columns.  config["schedulers"] must include "heft".
+    HEFT-relative columns, then add_replay_relative_metrics() appends
+    replayed_speedup_vs_heft.  config["schedulers"] must include "heft".
 
     Returns a pandas DataFrame where each row is one experimental run.
     """
@@ -306,7 +382,9 @@ def run_experiment_grid(config: dict) -> pd.DataFrame:
         )
         rows.append(row)
 
-    return add_relative_metrics(pd.DataFrame(rows))
+    df = add_relative_metrics(pd.DataFrame(rows))
+    df = add_replay_relative_metrics(df)
+    return df
 
 
 def save_results(df: pd.DataFrame, output_path: str) -> None:
