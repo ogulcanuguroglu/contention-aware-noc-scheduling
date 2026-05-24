@@ -1,0 +1,26 @@
+# Default configuration for Phase 9+ experiment runner.
+# Use src.experiment_runner.run_from_config("configs/default.yaml")
+# or add CLI integration in a later phase.
+
+experiment:
+  name: phase9_results
+  seeds: [42, 123, 999, 2024, 7777]
+  raw_dir: results/raw
+
+schedulers:
+  - heft
+  - contention_aware
+  - classical_duplication
+  - proposed
+
+dag:
+  task_counts: [20, 50, 100]
+  edge_probabilities: [0.15, 0.30]
+  ccr_values: [0.1, 1.0, 5.0]
+  computation_min: 10
+  computation_max: 100
+
+noc:
+  sizes: [4, 8]    # square meshes; size S → rows=S, cols=S
+  alpha: 1.0
+  beta: 0.1

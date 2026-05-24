@@ -1,0 +1,530 @@
+{
+  "metadata": {
+    "description": "Real scheduler output for HTML demo",
+    "rows": 4,
+    "cols": 4,
+    "alpha": 1.0,
+    "beta": 1.0,
+    "seed": 42,
+    "n_tasks": 9,
+    "edge_prob": 0.4,
+    "ccr": 1.0
+  },
+  "noc": {
+    "rows": 4,
+    "cols": 4,
+    "alpha": 1.0,
+    "beta": 1.0,
+    "processors": [
+      {
+        "id": 0,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": 1,
+        "x": 1,
+        "y": 0
+      },
+      {
+        "id": 2,
+        "x": 2,
+        "y": 0
+      },
+      {
+        "id": 3,
+        "x": 3,
+        "y": 0
+      },
+      {
+        "id": 4,
+        "x": 0,
+        "y": 1
+      },
+      {
+        "id": 5,
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": 6,
+        "x": 2,
+        "y": 1
+      },
+      {
+        "id": 7,
+        "x": 3,
+        "y": 1
+      },
+      {
+        "id": 8,
+        "x": 0,
+        "y": 2
+      },
+      {
+        "id": 9,
+        "x": 1,
+        "y": 2
+      },
+      {
+        "id": 10,
+        "x": 2,
+        "y": 2
+      },
+      {
+        "id": 11,
+        "x": 3,
+        "y": 2
+      },
+      {
+        "id": 12,
+        "x": 0,
+        "y": 3
+      },
+      {
+        "id": 13,
+        "x": 1,
+        "y": 3
+      },
+      {
+        "id": 14,
+        "x": 2,
+        "y": 3
+      },
+      {
+        "id": 15,
+        "x": 3,
+        "y": 3
+      }
+    ]
+  },
+  "dag": {
+    "tasks": [
+      {
+        "id": 0,
+        "comp_cost": 16.609341,
+        "rank": 118.406202
+      },
+      {
+        "id": 1,
+        "comp_cost": 11.583177,
+        "rank": 115.237469
+      },
+      {
+        "id": 2,
+        "comp_cost": 17.878969,
+        "rank": 89.838918
+      },
+      {
+        "id": 3,
+        "comp_cost": 15.46052,
+        "rank": 62.981458
+      },
+      {
+        "id": 4,
+        "comp_cost": 6.41266,
+        "rank": 59.442056
+      },
+      {
+        "id": 5,
+        "comp_cost": 19.634335,
+        "rank": 19.634335
+      },
+      {
+        "id": 6,
+        "comp_cost": 16.417096,
+        "rank": 37.951378
+      },
+      {
+        "id": 7,
+        "comp_cost": 16.790965,
+        "rank": 16.790965
+      },
+      {
+        "id": 8,
+        "comp_cost": 6.921704,
+        "rank": 6.921704
+      }
+    ],
+    "edges": [
+      {
+        "src": 0,
+        "dst": 2,
+        "volume": 9.291277
+      },
+      {
+        "src": 0,
+        "dst": 7,
+        "volume": 6.745822
+      },
+      {
+        "src": 1,
+        "dst": 2,
+        "volume": 11.148708
+      },
+      {
+        "src": 1,
+        "dst": 6,
+        "volume": 10.505108
+      },
+      {
+        "src": 2,
+        "dst": 4,
+        "volume": 9.851226
+      },
+      {
+        "src": 2,
+        "dst": 6,
+        "volume": 11.819351
+      },
+      {
+        "src": 2,
+        "dst": 7,
+        "volume": 10.946925
+      },
+      {
+        "src": 3,
+        "dst": 6,
+        "volume": 6.902893
+      },
+      {
+        "src": 3,
+        "dst": 7,
+        "volume": 9.621007
+      },
+      {
+        "src": 4,
+        "dst": 5,
+        "volume": 9.432241
+      },
+      {
+        "src": 4,
+        "dst": 6,
+        "volume": 12.411352
+      },
+      {
+        "src": 4,
+        "dst": 8,
+        "volume": 7.086946
+      },
+      {
+        "src": 6,
+        "dst": 8,
+        "volume": 11.945911
+      }
+    ],
+    "priority_order": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      6,
+      5,
+      7,
+      8
+    ]
+  },
+  "heft_schedule": {
+    "tasks": [
+      {
+        "id": 0,
+        "proc": 0,
+        "start": 0.0,
+        "finish": 16.609341,
+        "is_primary": true
+      },
+      {
+        "id": 1,
+        "proc": 1,
+        "start": 0.0,
+        "finish": 11.583177,
+        "is_primary": true
+      },
+      {
+        "id": 2,
+        "proc": 0,
+        "start": 23.731885,
+        "finish": 41.610853,
+        "is_primary": true
+      },
+      {
+        "id": 3,
+        "proc": 2,
+        "start": 0.0,
+        "finish": 15.46052,
+        "is_primary": true
+      },
+      {
+        "id": 4,
+        "proc": 0,
+        "start": 41.610853,
+        "finish": 48.023514,
+        "is_primary": true
+      },
+      {
+        "id": 5,
+        "proc": 1,
+        "start": 58.455754,
+        "finish": 78.09009,
+        "is_primary": true
+      },
+      {
+        "id": 6,
+        "proc": 0,
+        "start": 48.023514,
+        "finish": 64.440609,
+        "is_primary": true
+      },
+      {
+        "id": 7,
+        "proc": 4,
+        "start": 53.557778,
+        "finish": 70.348743,
+        "is_primary": true
+      },
+      {
+        "id": 8,
+        "proc": 0,
+        "start": 64.440609,
+        "finish": 71.362314,
+        "is_primary": true
+      }
+    ],
+    "communications": [],
+    "metrics": {
+      "makespan": 78.09009,
+      "primary_task_count": 9,
+      "duplicate_task_count": 0,
+      "duplication_ratio": 0.0,
+      "total_task_instance_count": 9,
+      "task_instance_ratio": 1.0,
+      "communication_count": 0,
+      "average_communication_latency": 0.0,
+      "total_communication_time": 0,
+      "average_link_utilization": 0.0,
+      "max_link_utilization": 0.0,
+      "average_processor_utilization": 0.102213,
+      "max_processor_utilization": 0.822637
+    }
+  },
+  "proposed_schedule": {
+    "tasks": [
+      {
+        "id": 0,
+        "proc": 0,
+        "start": 0.0,
+        "finish": 16.609341,
+        "is_primary": true
+      },
+      {
+        "id": 0,
+        "proc": 3,
+        "start": 0.0,
+        "finish": 16.609341,
+        "is_primary": false
+      },
+      {
+        "id": 0,
+        "proc": 5,
+        "start": 0.0,
+        "finish": 16.609341,
+        "is_primary": false
+      },
+      {
+        "id": 1,
+        "proc": 1,
+        "start": 0.0,
+        "finish": 11.583177,
+        "is_primary": true
+      },
+      {
+        "id": 2,
+        "proc": 0,
+        "start": 23.731885,
+        "finish": 41.610853,
+        "is_primary": true
+      },
+      {
+        "id": 2,
+        "proc": 3,
+        "start": 24.731885,
+        "finish": 42.610853,
+        "is_primary": false
+      },
+      {
+        "id": 2,
+        "proc": 5,
+        "start": 23.731885,
+        "finish": 41.610853,
+        "is_primary": false
+      },
+      {
+        "id": 3,
+        "proc": 2,
+        "start": 0.0,
+        "finish": 15.46052,
+        "is_primary": true
+      },
+      {
+        "id": 4,
+        "proc": 0,
+        "start": 41.610853,
+        "finish": 48.023514,
+        "is_primary": true
+      },
+      {
+        "id": 4,
+        "proc": 5,
+        "start": 41.610853,
+        "finish": 48.023514,
+        "is_primary": false
+      },
+      {
+        "id": 5,
+        "proc": 5,
+        "start": 48.023514,
+        "finish": 67.657849,
+        "is_primary": true
+      },
+      {
+        "id": 6,
+        "proc": 0,
+        "start": 48.023514,
+        "finish": 64.440609,
+        "is_primary": true
+      },
+      {
+        "id": 7,
+        "proc": 3,
+        "start": 42.610853,
+        "finish": 59.401818,
+        "is_primary": true
+      },
+      {
+        "id": 8,
+        "proc": 0,
+        "start": 64.440609,
+        "finish": 71.362314,
+        "is_primary": true
+      }
+    ],
+    "communications": [
+      {
+        "src_task": 1,
+        "dst_task": 2,
+        "src_proc": 1,
+        "dst_proc": 0,
+        "route": [
+          [
+            1,
+            0
+          ]
+        ],
+        "start": 11.583177,
+        "finish": 23.731885,
+        "volume": 11.148708
+      },
+      {
+        "src_task": 1,
+        "dst_task": 2,
+        "src_proc": 1,
+        "dst_proc": 5,
+        "route": [
+          [
+            1,
+            5
+          ]
+        ],
+        "start": 11.583177,
+        "finish": 23.731885,
+        "volume": 11.148708
+      },
+      {
+        "src_task": 1,
+        "dst_task": 2,
+        "src_proc": 1,
+        "dst_proc": 3,
+        "route": [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ]
+        ],
+        "start": 11.583177,
+        "finish": 24.731885,
+        "volume": 11.148708
+      },
+      {
+        "src_task": 1,
+        "dst_task": 6,
+        "src_proc": 1,
+        "dst_proc": 0,
+        "route": [
+          [
+            1,
+            0
+          ]
+        ],
+        "start": 23.731885,
+        "finish": 35.236992,
+        "volume": 10.505108
+      },
+      {
+        "src_task": 3,
+        "dst_task": 6,
+        "src_proc": 2,
+        "dst_proc": 0,
+        "route": [
+          [
+            2,
+            1
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "start": 35.236992,
+        "finish": 44.139885,
+        "volume": 6.902893
+      },
+      {
+        "src_task": 3,
+        "dst_task": 7,
+        "src_proc": 2,
+        "dst_proc": 3,
+        "route": [
+          [
+            2,
+            3
+          ]
+        ],
+        "start": 24.731885,
+        "finish": 35.352892,
+        "volume": 9.621007
+      }
+    ],
+    "duplication_steps": [],
+    "metrics": {
+      "makespan": 71.362314,
+      "primary_task_count": 9,
+      "duplicate_task_count": 5,
+      "duplication_ratio": 0.555556,
+      "total_task_instance_count": 14,
+      "task_instance_ratio": 1.555556,
+      "communication_count": 6,
+      "average_communication_latency": 11.412522,
+      "total_communication_time": 68.475132,
+      "average_link_utilization": 0.026428,
+      "max_link_utilization": 0.456217,
+      "average_processor_utilization": 0.177876,
+      "max_processor_utilization": 0.900192,
+      "speedup_vs_heft": 1.094276
+    }
+  }
+}

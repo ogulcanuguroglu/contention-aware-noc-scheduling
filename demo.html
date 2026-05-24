@@ -1,0 +1,1813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contention-Aware Task Duplication — 4×4 NoC Demo</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    #header {
+      background: #1a1a2e;
+      color: #ffffff;
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+
+    #header h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    #header .step-badge {
+      background: #e94560;
+      color: #fff;
+      border-radius: 20px;
+      padding: 4px 18px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    /* ── Main layout: three columns ──────────────────────────────── */
+    #main {
+      display: grid;
+      grid-template-columns: 220px 1fr 280px;
+      gap: 16px;
+      padding: 16px;
+      flex: 1;
+    }
+
+    /* ── Card base ────────────────────────────────────────────────── */
+    .card {
+      background: #ffffff;
+      border: 1.5px solid #d0d4de;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    }
+
+    .card-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #6b7280;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 6px;
+    }
+
+    /* ── Left panel: state machine ────────────────────────────────── */
+    #panel-states {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .state-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .state-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 7px;
+      border: 1.5px solid #e5e7eb;
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: #374151;
+      background: #f9fafb;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .state-item .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #d1d5db;
+      flex-shrink: 0;
+    }
+
+    .state-item.done {
+      background: #f0fdf4;
+      border-color: #86efac;
+      color: #166534;
+    }
+    .state-item.done .dot { background: #22c55e; }
+
+    .state-item.active {
+      background: #eff6ff;
+      border-color: #3b82f6;
+      color: #1d4ed8;
+      font-weight: 700;
+      box-shadow: 0 0 0 3px #bfdbfe;
+    }
+    .state-item.active .dot { background: #3b82f6; }
+
+    .state-item.pending {
+      opacity: 0.5;
+    }
+
+    /* ── Center panel ─────────────────────────────────────────────── */
+    #panel-center {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .viz-area {
+      flex: 1;
+      border: 2px dashed #cbd5e1;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 200px;
+      background: #f8fafc;
+      color: #94a3b8;
+      font-size: 1rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+    }
+
+    #dag-area { flex: 1.2; }
+    #noc-area { flex: 1; }
+
+    /* ── Right panel: explanation ─────────────────────────────────── */
+    #panel-explain {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .explain-box {
+      flex: 1;
+      background: #fefce8;
+      border: 1.5px solid #fde047;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 0.93rem;
+      line-height: 1.75;
+      color: #422006;
+      min-height: 120px;
+    }
+
+    .explain-box p {
+      margin-bottom: 10px;
+    }
+
+    .explain-box p:last-child { margin-bottom: 0; }
+
+    /* ── Bottom panel: Gantt + Metrics ────────────────────────────── */
+    #bottom {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 16px;
+      padding: 0 16px 16px;
+    }
+
+    #gantt-area {
+      min-height: 120px;
+      border: 2px dashed #cbd5e1;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8fafc;
+      color: #94a3b8;
+      font-size: 1rem;
+      font-weight: 500;
+    }
+
+    #metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .metric-cell {
+      background: #fff;
+      border: 1.5px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .metric-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+    }
+
+    .metric-value {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+
+    .metric-value.placeholder {
+      color: #d1d5db;
+      font-size: 1rem;
+    }
+
+    /* ── Controls ─────────────────────────────────────────────────── */
+    #controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #fff;
+      border-top: 1.5px solid #e5e7eb;
+      box-shadow: 0 -2px 6px rgba(0,0,0,0.05);
+    }
+
+    .btn {
+      padding: 10px 26px;
+      border: none;
+      border-radius: 7px;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      letter-spacing: 0.02em;
+    }
+
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #374151;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #d1d5db; }
+
+    .btn-primary {
+      background: #1d4ed8;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) { background: #1e40af; }
+
+    .btn-danger {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .btn-danger:hover:not(:disabled) { background: #fecaca; }
+
+    .btn-success {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .btn-success:hover:not(:disabled) { background: #bbf7d0; }
+
+    #autoplay-indicator {
+      font-size: 0.8rem;
+      color: #6b7280;
+      margin-left: 8px;
+    }
+
+    /* ── Data load status badge ───────────────────────────────────── */
+    #load-status {
+      font-size: 0.78rem;
+      font-weight: 600;
+      border-radius: 20px;
+      padding: 4px 14px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    #load-status.loading { background: #fef9c3; color: #854d0e; }
+    #load-status.ok      { background: #dcfce7; color: #166534; }
+    #load-status.error   { background: #fee2e2; color: #991b1b; }
+
+    /* ── Data-source badge ───────────────────────────────────────── */
+    #data-source-badge {
+      font-size: 0.72rem;
+      font-weight: 600;
+      border-radius: 20px;
+      padding: 3px 10px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      display: none;
+    }
+    #data-source-badge.json-file { background: #dbeafe; color: #1e40af; }
+    #data-source-badge.embedded  { background: #fef9c3; color: #713f12; }
+
+    /* ── DAG SVG panel ────────────────────────────────────────────── */
+    #dag-area.has-svg {
+      display: block;
+      padding: 6px;
+      overflow: hidden;
+      background: #ffffff;
+      border: 2px solid #cbd5e1;
+    }
+    #dag-area.has-svg.highlighted {
+      border-color: #f59e0b;
+      background: #fffbeb;
+    }
+
+    /* ── Rank table panel ─────────────────────────────────────────── */
+    #noc-area.has-rank-table {
+      display: block;
+      padding: 0;
+      overflow: hidden;
+      background: #ffffff;
+      border: 2px solid #cbd5e1;
+    }
+    #noc-area.has-rank-table.highlighted {
+      border-color: #8b5cf6;
+      background: #faf5ff;
+    }
+
+    .rank-table-wrap { height: 100%; overflow-y: auto; padding: 8px 6px; }
+
+    .rank-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.77rem;
+    }
+    .rank-table th {
+      position: sticky; top: 0; z-index: 1;
+      background: #f1f5f9;
+      color: #475569;
+      font-weight: 700;
+      font-size: 0.66rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 5px 6px;
+      text-align: left;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    .rank-table.hl th {
+      background: #ede9fe;
+      border-bottom-color: #8b5cf6;
+    }
+    .rank-table td {
+      padding: 5px 6px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #374151;
+      vertical-align: middle;
+    }
+    .rank-table tr:last-child td { border-bottom: none; }
+    .rank-table tr:hover td      { background: #f8fafc; }
+    .rank-table.hl tr:hover td   { background: #f5f3ff; }
+
+    .pri-badge {
+      display: inline-block;
+      background: #e0e7ff; color: #3730a3;
+      border-radius: 10px; padding: 1px 7px;
+      font-size: 0.7rem; font-weight: 700;
+      min-width: 20px; text-align: center;
+    }
+    .rank-table.hl .pri-badge { background: #ede9fe; color: #6d28d9; }
+
+    .rank-val  { font-weight: 700; font-family: monospace; color: #1e40af; }
+    .rank-table.hl .rank-val { color: #7c3aed; }
+
+    .tid-cell  { font-weight: 700; font-family: monospace; color: #1e40af; }
+    .rank-table.hl .tid-cell { color: #7c3aed; }
+
+    .succ-cell { color: #6b7280; font-size: 0.71rem; font-family: monospace; }
+
+    /* ── NoC mesh panel ───────────────────────────────────────────── */
+    #noc-area.has-noc {
+      display: block;
+      padding: 6px;
+      overflow: hidden;
+      background: #ffffff;
+      border: 2px solid #cbd5e1;
+    }
+    #noc-area.has-noc.highlighted {
+      border-color: #0891b2;
+      background: #ecfeff;
+    }
+
+    /* ── Gantt tab row ────────────────────────────────────────────── */
+    .gantt-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 6px;
+    }
+    .gantt-header .card-title {
+      margin-bottom: 0;
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .gantt-tabs { display: flex; gap: 4px; flex-shrink: 0; }
+    .gantt-tab {
+      padding: 3px 11px;
+      font-size: 0.73rem;
+      font-weight: 600;
+      border-radius: 5px;
+      border: 1.5px solid #e5e7eb;
+      background: #f9fafb;
+      color: #6b7280;
+      cursor: pointer;
+      transition: all 0.15s;
+      letter-spacing: 0.01em;
+    }
+    .gantt-tab:hover:not(.active) { background: #f3f4f6; color: #374151; }
+    .gantt-tab.active             { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+    .gantt-tab[data-view="proposed"].active { background: #15803d; border-color: #15803d; }
+
+    /* ── Gantt chart panel ────────────────────────────────────────── */
+    #gantt-area.has-chart {
+      display: block;
+      padding: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: #ffffff;
+      border: 2px solid #cbd5e1;
+      color: inherit;
+      font-size: inherit;
+      font-weight: inherit;
+    }
+    #gantt-area.has-chart.highlighted { border-color: #22c55e; background: #f0fdf4; }
+
+    /* ── Duplication & comparison panels ─────────────────────────── */
+    #dup-panel, #compare-panel {
+      margin-top: 10px;
+      border-top: 1px solid #e5e7eb;
+      padding-top: 8px;
+    }
+    #dup-panel.highlighted {
+      background: #fff7ed;
+      border-radius: 6px;
+      padding: 8px;
+      margin-top: 10px;
+      border: 1.5px solid #fed7aa;
+    }
+    #compare-panel.highlighted {
+      background: #f0fdf4;
+      border-radius: 6px;
+      padding: 8px;
+      margin-top: 10px;
+      border: 1.5px solid #86efac;
+    }
+    .panel-section-title {
+      font-size: 0.66rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .panel-badge {
+      background: #fee2e2;
+      color: #991b1b;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 0.63rem;
+      font-weight: 700;
+    }
+    .dup-table, .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.71rem;
+    }
+    .dup-table th, .compare-table th {
+      background: #f8fafc;
+      color: #6b7280;
+      font-size: 0.62rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      text-align: left;
+      padding: 3px 5px;
+      border-bottom: 1.5px solid #e2e8f0;
+    }
+    .dup-table td, .compare-table td {
+      padding: 3px 5px;
+      border-bottom: 1px solid #f1f5f9;
+      font-family: monospace;
+      font-size: 0.7rem;
+      color: #374151;
+    }
+    .dup-table tr:last-child td,
+    .compare-table tr:last-child td { border-bottom: none; }
+    .dup-summary {
+      margin-top: 6px;
+      font-size: 0.71rem;
+      color: #6b7280;
+    }
+    .dup-note {
+      margin-top: 5px;
+      font-size: 0.66rem;
+      color: #9ca3af;
+      line-height: 1.4;
+      border-top: 1px dashed #e5e7eb;
+      padding-top: 5px;
+      font-style: italic;
+    }
+
+    /* ── Page footer ─────────────────────────────────────────────── */
+    #page-footer {
+      background: #1a1a2e;
+      color: #64748b;
+      text-align: center;
+      padding: 7px 16px;
+      font-size: 0.72rem;
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
+      border-top: 1px solid #2d3748;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header id="header">
+    <h1>Contention-Aware Task Duplication for DAG Scheduling on 4×4 NoC</h1>
+    <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+      <span id="load-status" class="loading">Loading data…</span>
+      <span id="data-source-badge"></span>
+      <span class="step-badge" id="step-badge">Step 0 / 7</span>
+    </div>
+  </header>
+
+  <!-- ── Main three-column layout ───────────────────────────────── -->
+  <div id="main">
+
+    <!-- Left: State Machine -->
+    <aside class="card" id="panel-states">
+      <div class="card-title">Algorithm State</div>
+      <ul class="state-list" id="state-list">
+        <li class="state-item active"  data-state="IDLE">
+          <span class="dot"></span>IDLE
+        </li>
+        <li class="state-item pending" data-state="LOAD_DAG">
+          <span class="dot"></span>LOAD_DAG
+        </li>
+        <li class="state-item pending" data-state="COMPUTE_RANK">
+          <span class="dot"></span>COMPUTE_RANK
+        </li>
+        <li class="state-item pending" data-state="BASE_SCHEDULE">
+          <span class="dot"></span>BASE_SCHEDULE
+        </li>
+        <li class="state-item pending" data-state="EVALUATE_DUPLICATION">
+          <span class="dot"></span>EVALUATE_DUPLICATION
+        </li>
+        <li class="state-item pending" data-state="UPDATE_NOC_CONTENTION">
+          <span class="dot"></span>UPDATE_NOC_CONTENTION
+        </li>
+        <li class="state-item pending" data-state="COMMIT_TASK">
+          <span class="dot"></span>COMMIT_TASK
+        </li>
+        <li class="state-item pending" data-state="FINAL_REPORT">
+          <span class="dot"></span>FINAL_REPORT
+        </li>
+      </ul>
+    </aside>
+
+    <!-- Center: DAG + NoC visualizations -->
+    <div id="panel-center">
+      <div class="card" style="flex:1; display:flex; flex-direction:column;">
+        <div class="card-title">DAG &amp; NoC Visualization</div>
+        <div style="display:flex; gap:14px; flex:1;">
+          <div class="viz-area" id="dag-area">DAG visualization will appear here</div>
+          <div class="viz-area" id="noc-area">4×4 NoC will appear here</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Explanation -->
+    <aside class="card" id="panel-explain">
+      <div class="card-title">Presenter Notes</div>
+      <div class="explain-box" id="explain-box">
+        <p>Welcome to the interactive demo.</p>
+        <p>Use <strong>Next Step</strong> to advance through the scheduling pipeline, or press <strong>Auto Play</strong> to run it automatically.</p>
+        <p>Each step will explain what the algorithm is doing.</p>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ── Bottom: Gantt + Metrics ─────────────────────────────────── -->
+  <div id="bottom">
+
+    <div class="card" style="display:flex; flex-direction:column;">
+      <div class="gantt-header">
+        <div class="card-title">Gantt Chart</div>
+        <div class="gantt-tabs">
+          <button class="gantt-tab active" data-view="heft"
+                  onclick="setGanttView('heft')">HEFT Baseline</button>
+          <button class="gantt-tab" data-view="proposed"
+                  onclick="setGanttView('proposed')">Proposed CA-D</button>
+        </div>
+      </div>
+      <div id="gantt-area">Gantt chart will appear here</div>
+    </div>
+
+    <div class="card" style="overflow-y:auto;">
+      <div class="card-title">Final Metrics</div>
+      <div id="metrics-grid">
+        <div class="metric-cell">
+          <span class="metric-label">Makespan</span>
+          <span class="metric-value placeholder" id="m-makespan">—</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Speedup vs HEFT</span>
+          <span class="metric-value placeholder" id="m-speedup">—</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Avg Comm Latency</span>
+          <span class="metric-value placeholder" id="m-latency">—</span>
+        </div>
+        <div class="metric-cell">
+          <span class="metric-label">Network Utilization</span>
+          <span class="metric-value placeholder" id="m-netutil">—</span>
+        </div>
+        <div class="metric-cell" style="grid-column: span 2;">
+          <span class="metric-label">Duplication Ratio</span>
+          <span class="metric-value placeholder" id="m-dupratio">—</span>
+        </div>
+      </div>
+
+      <div id="dup-panel"></div>
+      <div id="compare-panel" style="display:none;"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Controls ────────────────────────────────────────────────── -->
+  <footer id="controls">
+    <button class="btn btn-secondary" id="btn-prev" disabled>&#8592; Previous Step</button>
+    <button class="btn btn-danger"    id="btn-reset">Reset</button>
+    <button class="btn btn-success"   id="btn-auto">Auto Play</button>
+    <button class="btn btn-primary"   id="btn-next">Next Step &#8594;</button>
+    <span id="autoplay-indicator"></span>
+  </footer>
+
+  <!-- ── Page footer ───────────────────────────────────────────── -->
+  <div id="page-footer">
+    Visualization generated from real scheduler output &nbsp;·&nbsp; Embedded fallback matches schedule_output.json
+  </div>
+
+  <script>
+    // ── Embedded fallback (real output from scripts/export_demo_json.py) ──
+    // Regenerate the source file with:  python3 scripts/export_demo_json.py
+    // Then re-copy the compact JSON here to keep it up to date.
+    const EMBEDDED_SCHEDULE_DATA = {"metadata":{"description":"Real scheduler output for HTML demo","rows":4,"cols":4,"alpha":1.0,"beta":1.0,"seed":42,"n_tasks":9,"edge_prob":0.4,"ccr":1.0},"noc":{"rows":4,"cols":4,"alpha":1.0,"beta":1.0,"processors":[{"id":0,"x":0,"y":0},{"id":1,"x":1,"y":0},{"id":2,"x":2,"y":0},{"id":3,"x":3,"y":0},{"id":4,"x":0,"y":1},{"id":5,"x":1,"y":1},{"id":6,"x":2,"y":1},{"id":7,"x":3,"y":1},{"id":8,"x":0,"y":2},{"id":9,"x":1,"y":2},{"id":10,"x":2,"y":2},{"id":11,"x":3,"y":2},{"id":12,"x":0,"y":3},{"id":13,"x":1,"y":3},{"id":14,"x":2,"y":3},{"id":15,"x":3,"y":3}]},"dag":{"tasks":[{"id":0,"comp_cost":16.609341,"rank":118.406202},{"id":1,"comp_cost":11.583177,"rank":115.237469},{"id":2,"comp_cost":17.878969,"rank":89.838918},{"id":3,"comp_cost":15.46052,"rank":62.981458},{"id":4,"comp_cost":6.41266,"rank":59.442056},{"id":5,"comp_cost":19.634335,"rank":19.634335},{"id":6,"comp_cost":16.417096,"rank":37.951378},{"id":7,"comp_cost":16.790965,"rank":16.790965},{"id":8,"comp_cost":6.921704,"rank":6.921704}],"edges":[{"src":0,"dst":2,"volume":9.291277},{"src":0,"dst":7,"volume":6.745822},{"src":1,"dst":2,"volume":11.148708},{"src":1,"dst":6,"volume":10.505108},{"src":2,"dst":4,"volume":9.851226},{"src":2,"dst":6,"volume":11.819351},{"src":2,"dst":7,"volume":10.946925},{"src":3,"dst":6,"volume":6.902893},{"src":3,"dst":7,"volume":9.621007},{"src":4,"dst":5,"volume":9.432241},{"src":4,"dst":6,"volume":12.411352},{"src":4,"dst":8,"volume":7.086946},{"src":6,"dst":8,"volume":11.945911}],"priority_order":[0,1,2,3,4,6,5,7,8]},"heft_schedule":{"tasks":[{"id":0,"proc":0,"start":0.0,"finish":16.609341,"is_primary":true},{"id":1,"proc":1,"start":0.0,"finish":11.583177,"is_primary":true},{"id":2,"proc":0,"start":23.731885,"finish":41.610853,"is_primary":true},{"id":3,"proc":2,"start":0.0,"finish":15.46052,"is_primary":true},{"id":4,"proc":0,"start":41.610853,"finish":48.023514,"is_primary":true},{"id":5,"proc":1,"start":58.455754,"finish":78.09009,"is_primary":true},{"id":6,"proc":0,"start":48.023514,"finish":64.440609,"is_primary":true},{"id":7,"proc":4,"start":53.557778,"finish":70.348743,"is_primary":true},{"id":8,"proc":0,"start":64.440609,"finish":71.362314,"is_primary":true}],"communications":[],"metrics":{"makespan":78.09009,"primary_task_count":9,"duplicate_task_count":0,"duplication_ratio":0.0,"total_task_instance_count":9,"task_instance_ratio":1.0,"communication_count":0,"average_communication_latency":0.0,"total_communication_time":0,"average_link_utilization":0.0,"max_link_utilization":0.0,"average_processor_utilization":0.102213,"max_processor_utilization":0.822637}},"proposed_schedule":{"tasks":[{"id":0,"proc":0,"start":0.0,"finish":16.609341,"is_primary":true},{"id":0,"proc":3,"start":0.0,"finish":16.609341,"is_primary":false},{"id":0,"proc":5,"start":0.0,"finish":16.609341,"is_primary":false},{"id":1,"proc":1,"start":0.0,"finish":11.583177,"is_primary":true},{"id":2,"proc":0,"start":23.731885,"finish":41.610853,"is_primary":true},{"id":2,"proc":3,"start":24.731885,"finish":42.610853,"is_primary":false},{"id":2,"proc":5,"start":23.731885,"finish":41.610853,"is_primary":false},{"id":3,"proc":2,"start":0.0,"finish":15.46052,"is_primary":true},{"id":4,"proc":0,"start":41.610853,"finish":48.023514,"is_primary":true},{"id":4,"proc":5,"start":41.610853,"finish":48.023514,"is_primary":false},{"id":5,"proc":5,"start":48.023514,"finish":67.657849,"is_primary":true},{"id":6,"proc":0,"start":48.023514,"finish":64.440609,"is_primary":true},{"id":7,"proc":3,"start":42.610853,"finish":59.401818,"is_primary":true},{"id":8,"proc":0,"start":64.440609,"finish":71.362314,"is_primary":true}],"communications":[{"src_task":1,"dst_task":2,"src_proc":1,"dst_proc":0,"route":[[1,0]],"start":11.583177,"finish":23.731885,"volume":11.148708},{"src_task":1,"dst_task":2,"src_proc":1,"dst_proc":5,"route":[[1,5]],"start":11.583177,"finish":23.731885,"volume":11.148708},{"src_task":1,"dst_task":2,"src_proc":1,"dst_proc":3,"route":[[1,2],[2,3]],"start":11.583177,"finish":24.731885,"volume":11.148708},{"src_task":1,"dst_task":6,"src_proc":1,"dst_proc":0,"route":[[1,0]],"start":23.731885,"finish":35.236992,"volume":10.505108},{"src_task":3,"dst_task":6,"src_proc":2,"dst_proc":0,"route":[[2,1],[1,0]],"start":35.236992,"finish":44.139885,"volume":6.902893},{"src_task":3,"dst_task":7,"src_proc":2,"dst_proc":3,"route":[[2,3]],"start":24.731885,"finish":35.352892,"volume":9.621007}],"duplication_steps":[],"metrics":{"makespan":71.362314,"primary_task_count":9,"duplicate_task_count":5,"duplication_ratio":0.555556,"total_task_instance_count":14,"task_instance_ratio":1.555556,"communication_count":6,"average_communication_latency":11.412522,"total_communication_time":68.475132,"average_link_utilization":0.026428,"max_link_utilization":0.456217,"average_processor_utilization":0.177876,"max_processor_utilization":0.900192,"speedup_vs_heft":1.094276}}};
+
+    // ── Global data ────────────────────────────────────────────────
+    let SCHEDULE_DATA = null;
+
+    // ── State machine definition ───────────────────────────────────
+    const STATES = [
+      'IDLE',
+      'LOAD_DAG',
+      'COMPUTE_RANK',
+      'BASE_SCHEDULE',
+      'EVALUATE_DUPLICATION',
+      'UPDATE_NOC_CONTENTION',
+      'COMMIT_TASK',
+      'FINAL_REPORT',
+    ];
+
+    let currentStep      = 0;
+    let autoTimer        = null;
+    let selectedCommIdx  = 0;
+    let ganttView        = 'heft';   // 'heft' | 'proposed'
+
+    // ── DOM refs ───────────────────────────────────────────────────
+    const stateItems = document.querySelectorAll('.state-item');
+    const stepBadge  = document.getElementById('step-badge');
+    const explainBox = document.getElementById('explain-box');
+    const loadStatus = document.getElementById('load-status');
+    const dagArea    = document.getElementById('dag-area');
+    const btnPrev    = document.getElementById('btn-prev');
+    const btnNext    = document.getElementById('btn-next');
+    const btnReset   = document.getElementById('btn-reset');
+    const btnAuto    = document.getElementById('btn-auto');
+    const autoInd    = document.getElementById('autoplay-indicator');
+
+    // ── Generic helpers ────────────────────────────────────────────
+    function fmt(val, digits = 2) {
+      if (val === undefined || val === null || val !== val) return 'N/A';
+      return typeof val === 'number' ? val.toFixed(digits) : String(val);
+    }
+
+    function get(obj, ...keys) {
+      return keys.reduce((o, k) => (o != null && k in o ? o[k] : null), obj);
+    }
+
+    function setMetric(id, val, suffix = '') {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (val === null || val === undefined) {
+        el.textContent = 'N/A';
+        el.classList.add('placeholder');
+      } else {
+        el.textContent = fmt(val) + suffix;
+        el.classList.remove('placeholder');
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DAG RENDERING
+    // ═══════════════════════════════════════════════════════════════
+
+    // Assign each task a column index = longest path from any source.
+    // Works because dag_generator guarantees src-id < dst-id on every edge.
+    function dagLayers(tasks, edges) {
+      const layer = {};
+      const preds = {};
+      for (const t of tasks)  { layer[t.id] = 0; preds[t.id] = []; }
+      for (const e of edges)  preds[e.dst].push(e.src);
+      for (const t of [...tasks].sort((a, b) => a.id - b.id)) {
+        layer[t.id] = preds[t.id].length === 0
+          ? 0
+          : Math.max(...preds[t.id].map(p => layer[p])) + 1;
+      }
+      return layer;
+    }
+
+    // Map each task to {x, y} pixel coordinates in a 660×280 canvas.
+    function dagPositions(tasks, layers) {
+      const byLayer = {};
+      for (const t of tasks) {
+        const l = layers[t.id];
+        (byLayer[l] = byLayer[l] || []).push(t.id);
+      }
+      for (const ids of Object.values(byLayer)) ids.sort((a, b) => a - b);
+
+      const maxL  = Math.max(...Object.keys(byLayer).map(Number));
+      const W = 660, H = 280, xPad = 60, yPad = 44;
+      const xStep = maxL > 0 ? (W - 2 * xPad) / maxL : 0;
+
+      const pos = {};
+      for (const [lStr, ids] of Object.entries(byLayer)) {
+        const l = +lStr;
+        const x = xPad + l * xStep;
+        const n = ids.length;
+        const avail = H - 2 * yPad;
+        ids.forEach((id, i) => {
+          pos[id] = { x, y: n === 1 ? H / 2 : yPad + i * avail / (n - 1) };
+        });
+      }
+      return pos;
+    }
+
+    // Build and inject the DAG as an inline SVG.
+    function renderDAG(highlighted = false, hlEdge = null, hlTaskIds = null) {
+      // Validate data
+      if (!SCHEDULE_DATA || !SCHEDULE_DATA.dag ||
+          !Array.isArray(SCHEDULE_DATA.dag.tasks) ||
+          !Array.isArray(SCHEDULE_DATA.dag.edges)) {
+        dagArea.classList.remove('has-svg', 'highlighted');
+        dagArea.innerHTML =
+          '<span style="color:#ef4444;font-size:0.9rem;">' +
+          '⚠ DAG data missing — run export script first.</span>';
+        return;
+      }
+
+      const tasks  = SCHEDULE_DATA.dag.tasks;
+      const edges  = SCHEDULE_DATA.dag.edges;
+      const layers = dagLayers(tasks, edges);
+      const pos    = dagPositions(tasks, layers);
+
+      // Colour scheme switches on highlight
+      const nc = highlighted ? '#fef3c7' : '#dbeafe';   // node fill
+      const ns = highlighted ? '#d97706' : '#3b82f6';   // node stroke
+      const nt = highlighted ? '#78350f' : '#1e40af';   // node text
+      const ec = highlighted ? '#d97706' : '#94a3b8';   // edge colour
+      const lb = highlighted ? '#fef9c3' : '#f1f5f9';   // label bg
+      const lt = highlighted ? '#78350f' : '#475569';   // label text
+      const sw = highlighted ? 2.5 : 2.0;               // node stroke-width
+      const ew = highlighted ? 2.0 : 1.5;               // edge stroke-width
+
+      const R = 28;   // node radius
+      const W = 660, H = 280;
+
+      let s = `<svg xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 ${W} ${H}" width="100%"
+        style="display:block;height:auto;max-height:260px;">
+        <defs>
+          <marker id="arr" markerWidth="7" markerHeight="7"
+            refX="5.5" refY="3.5" orient="auto">
+            <path d="M0,0.5 L0,6.5 L7,3.5 z" fill="${ec}"/>
+          </marker>
+          <marker id="arr-hl" markerWidth="7" markerHeight="7"
+            refX="5.5" refY="3.5" orient="auto">
+            <path d="M0,0.5 L0,6.5 L7,3.5 z" fill="#f97316"/>
+          </marker>
+        </defs>`;
+
+      // ── Edges (drawn first, behind nodes) ──
+      for (const e of edges) {
+        const p1 = pos[e.src], p2 = pos[e.dst];
+        if (!p1 || !p2) continue;
+        const dx = p2.x - p1.x, dy = p2.y - p1.y;
+        const len = Math.hypot(dx, dy);
+        if (len < 1) continue;
+        const ux = dx / len, uy = dy / len;
+
+        // Clip line to node boundaries; leave room for arrowhead (8px)
+        const x1 = (p1.x + ux * R).toFixed(1);
+        const y1 = (p1.y + uy * R).toFixed(1);
+        const x2 = (p2.x - ux * (R + 8)).toFixed(1);
+        const y2 = (p2.y - uy * (R + 8)).toFixed(1);
+        const mx = ((p1.x + p2.x) / 2).toFixed(1);
+        const my = ((p1.y + p2.y) / 2).toFixed(1);
+
+        const isHLedge = hlEdge && e.src === hlEdge.src && e.dst === hlEdge.dst;
+        const eColor = isHLedge ? '#f97316' : ec;
+        const eWidth = isHLedge ? 2.5 : ew;
+        s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+          stroke="${eColor}" stroke-width="${eWidth}"
+          marker-end="${isHLedge ? 'url(#arr-hl)' : 'url(#arr)'}"/>`;
+
+        // Volume label with white background pill
+        const lbl  = `v=${e.volume.toFixed(1)}`;
+        const lw   = lbl.length * 5.4 + 6;
+        const lx   = (parseFloat(mx) - lw / 2).toFixed(1);
+        const ly   = (parseFloat(my) - 8).toFixed(1);
+        s += `<rect x="${lx}" y="${ly}" width="${lw.toFixed(1)}" height="14"
+          rx="3" fill="${isHLedge ? '#fff7ed' : lb}" stroke="${eColor}" stroke-width="0.8"/>`;
+        s += `<text x="${mx}" y="${(parseFloat(my) + 4).toFixed(1)}"
+          text-anchor="middle" font-size="9" font-family="monospace"
+          fill="${isHLedge ? '#c2410c' : lt}">${lbl}</text>`;
+      }
+
+      // ── Nodes ──
+      for (const t of tasks) {
+        const { x, y } = pos[t.id];
+        const isDupNode = hlTaskIds && hlTaskIds.has(t.id);
+        const nFill   = isDupNode ? '#ffedd5' : nc;
+        const nStroke = isDupNode ? '#ea580c' : ns;
+        const nText   = isDupNode ? '#7c2d12' : nt;
+        const nSW     = isDupNode ? 3.0 : sw;
+        s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${R}"
+          fill="${nFill}" stroke="${nStroke}" stroke-width="${nSW}"/>`;
+        s += `<text x="${x.toFixed(1)}" y="${(y - 5).toFixed(1)}"
+          text-anchor="middle" font-size="14" font-weight="700"
+          font-family="'Segoe UI',Arial,sans-serif" fill="${nText}">T${t.id}</text>`;
+        s += `<text x="${x.toFixed(1)}" y="${(y + 12).toFixed(1)}"
+          text-anchor="middle" font-size="9" font-family="monospace"
+          fill="${isDupNode ? '#9a3412' : highlighted ? '#92400e' : '#374151'}">c=${t.comp_cost.toFixed(1)}</text>`;
+      }
+
+      s += '</svg>';
+
+      dagArea.classList.add('has-svg');
+      dagArea.classList.toggle('highlighted', highlighted);
+      dagArea.innerHTML = s;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // RANK TABLE
+    // ═══════════════════════════════════════════════════════════════
+
+    function renderRankTable(highlighted = false) {
+      const nocArea = document.getElementById('noc-area');
+
+      if (!SCHEDULE_DATA || !SCHEDULE_DATA.dag ||
+          !Array.isArray(SCHEDULE_DATA.dag.tasks)          ||
+          !Array.isArray(SCHEDULE_DATA.dag.edges)          ||
+          !Array.isArray(SCHEDULE_DATA.dag.priority_order)) {
+        nocArea.classList.remove('has-rank-table', 'highlighted');
+        nocArea.textContent = '4×4 NoC will appear here';
+        return;
+      }
+
+      const tasks    = SCHEDULE_DATA.dag.tasks;
+      const edges    = SCHEDULE_DATA.dag.edges;
+      const priority = SCHEDULE_DATA.dag.priority_order;
+
+      // Build successor list per task from edges
+      const succMap = {};
+      for (const t of tasks) succMap[t.id] = [];
+      for (const e of edges) (succMap[e.src] = succMap[e.src] || []).push(e.dst);
+
+      // Index tasks by id
+      const byId = {};
+      for (const t of tasks) byId[t.id] = t;
+
+      const hlClass = highlighted ? 'hl' : '';
+
+      let html = `
+        <div class="rank-table-wrap">
+          <table class="rank-table ${hlClass}">
+            <thead><tr>
+              <th>#</th>
+              <th>Task</th>
+              <th>Comp Cost</th>
+              <th>Upward Rank</th>
+              <th>Successors</th>
+            </tr></thead>
+            <tbody>`;
+
+      for (let i = 0; i < priority.length; i++) {
+        const tid  = priority[i];
+        const task = byId[tid];
+        if (!task) continue;
+        const succs = (succMap[tid] || []).map(s => `T${s}`).join(', ') || '—';
+        html += `
+          <tr>
+            <td><span class="pri-badge">${i + 1}</span></td>
+            <td class="tid-cell">T${task.id}</td>
+            <td style="font-family:monospace">${task.comp_cost.toFixed(2)}</td>
+            <td><span class="rank-val">${task.rank.toFixed(2)}</span></td>
+            <td class="succ-cell">${succs}</td>
+          </tr>`;
+      }
+
+      html += `</tbody></table></div>`;
+
+      nocArea.classList.remove('has-noc');
+      nocArea.classList.add('has-rank-table');
+      nocArea.classList.toggle('highlighted', highlighted);
+      nocArea.innerHTML = html;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // NOC MESH
+    // ═══════════════════════════════════════════════════════════════
+
+    function renderNoC(highlighted = false, selComm = null) {
+      const nocArea = document.getElementById('noc-area');
+
+      if (!SCHEDULE_DATA || !SCHEDULE_DATA.noc ||
+          !Array.isArray(SCHEDULE_DATA.noc.processors)) {
+        nocArea.classList.remove('has-rank-table', 'has-noc', 'highlighted');
+        nocArea.innerHTML =
+          '<span style="color:#ef4444;font-size:0.9rem;">' +
+          '⚠ NoC data missing — run export script first.</span>';
+        return;
+      }
+
+      const noc   = SCHEDULE_DATA.noc;
+      const rows  = noc.rows  || 4;
+      const cols  = noc.cols  || 4;
+      const procs = noc.processors;
+
+      // Build route link set (undirected key "min_max") from selComm
+      const routeSet = new Set();
+      let srcProc = -1, dstProc = -1;
+      if (selComm && Array.isArray(selComm.route)) {
+        for (const [a, b] of selComm.route) {
+          routeSet.add(`${Math.min(a, b)}_${Math.max(a, b)}`);
+        }
+        srcProc = selComm.src_proc;
+        dstProc = selComm.dst_proc;
+      }
+
+      // Colour scheme
+      const nc = highlighted ? '#cffafe' : '#e0f2fe';
+      const ns = highlighted ? '#0891b2' : '#0284c7';
+      const nt = highlighted ? '#164e63' : '#0c4a6e';
+      const lc = highlighted ? '#06b6d4' : '#7dd3fc';
+      const lw = highlighted ? 2.5 : 1.8;
+      const sw = highlighted ? 2.5 : 2.0;
+      const R  = 18;
+
+      // Canvas: top grid + bottom info bar
+      const W = 270, H = 300;
+      const xPad = 32, yPad = 30, yOff = 18;
+      const barTop = 218;
+      const xStep = cols > 1 ? (W - 2 * xPad) / (cols - 1) : 0;
+      const yStep = rows > 1 ? (barTop - yOff - yPad - R - 6) / (rows - 1) : 0;
+
+      // Pixel position map
+      const pos = {};
+      for (const p of procs) {
+        pos[p.id] = {
+          px: xPad + p.x * xStep,
+          py: yOff + yPad + p.y * yStep,
+        };
+      }
+
+      let s = `<svg xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 ${W} ${H}" width="100%"
+        style="display:block;height:auto;max-height:296px;">`;
+
+      // Caption
+      s += `<text x="${(W / 2).toFixed(1)}" y="12"
+        text-anchor="middle" font-size="8"
+        font-family="'Segoe UI',Arial,sans-serif"
+        fill="#9ca3af">4×4 Mesh NoC — real scheduler configuration</text>`;
+
+      // Links (drawn before nodes)
+      for (const p of procs) {
+        // Right neighbour
+        if (p.x + 1 < cols) {
+          const nid = p.y * cols + (p.x + 1);
+          if (pos[nid]) {
+            const key = `${Math.min(p.id, nid)}_${Math.max(p.id, nid)}`;
+            const isRoute = routeSet.has(key);
+            s += `<line x1="${pos[p.id].px.toFixed(1)}" y1="${pos[p.id].py.toFixed(1)}"
+              x2="${pos[nid].px.toFixed(1)}" y2="${pos[nid].py.toFixed(1)}"
+              stroke="${isRoute ? '#f97316' : lc}"
+              stroke-width="${isRoute ? 4 : lw}"
+              stroke-linecap="round"/>`;
+          }
+        }
+        // Down neighbour
+        if (p.y + 1 < rows) {
+          const nid = (p.y + 1) * cols + p.x;
+          if (pos[nid]) {
+            const key = `${Math.min(p.id, nid)}_${Math.max(p.id, nid)}`;
+            const isRoute = routeSet.has(key);
+            s += `<line x1="${pos[p.id].px.toFixed(1)}" y1="${pos[p.id].py.toFixed(1)}"
+              x2="${pos[nid].px.toFixed(1)}" y2="${pos[nid].py.toFixed(1)}"
+              stroke="${isRoute ? '#f97316' : lc}"
+              stroke-width="${isRoute ? 4 : lw}"
+              stroke-linecap="round"/>`;
+          }
+        }
+      }
+
+      // Processor nodes
+      for (const p of procs) {
+        const { px, py } = pos[p.id];
+        const isSrc   = p.id === srcProc;
+        const isDst   = p.id === dstProc;
+        const nFill   = isSrc ? '#dcfce7' : isDst ? '#fef3c7' : nc;
+        const nStroke = isSrc ? '#16a34a' : isDst ? '#d97706' : ns;
+        const nText   = isSrc ? '#14532d' : isDst ? '#78350f' : nt;
+        const nSW     = (isSrc || isDst) ? 2.5 : sw;
+        s += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${R}"
+          fill="${nFill}" stroke="${nStroke}" stroke-width="${nSW}"/>`;
+        s += `<text x="${px.toFixed(1)}" y="${(py + 4).toFixed(1)}"
+          text-anchor="middle" font-size="11" font-weight="700"
+          font-family="'Segoe UI',Arial,sans-serif"
+          fill="${nText}">P${p.id}</text>`;
+      }
+
+      // ── Info bar ──────────────────────────────────────────────────
+      const comms  = SCHEDULE_DATA?.proposed_schedule?.communications || [];
+      const nComms = comms.length;
+
+      s += `<line x1="8" y1="${barTop}" x2="${W - 8}" y2="${barTop}"
+        stroke="#e5e7eb" stroke-width="1"/>`;
+
+      if (nComms === 0) {
+        s += `<text x="${(W / 2).toFixed(1)}" y="${barTop + 20}"
+          text-anchor="middle" font-size="9"
+          font-family="'Segoe UI',Arial,sans-serif" fill="#9ca3af">
+          No inter-processor communications</text>`;
+      } else {
+        const idx = Math.max(0, Math.min(selectedCommIdx, nComms - 1));
+        const c   = comms[idx];
+        s += `<text x="${(W / 2).toFixed(1)}" y="${barTop + 15}"
+          text-anchor="middle" font-size="9" font-weight="700"
+          font-family="'Segoe UI',Arial,sans-serif" fill="#1e3a5f">
+          Comm ${idx + 1}/${nComms}: T${c.src_task}→T${c.dst_task}  |  P${c.src_proc}→P${c.dst_proc}</text>`;
+        s += `<text x="${(W / 2).toFixed(1)}" y="${barTop + 28}"
+          text-anchor="middle" font-size="8" font-family="monospace" fill="#6b7280">
+          vol=${c.volume.toFixed(1)}  start=${c.start.toFixed(0)}  end=${c.finish.toFixed(0)}</text>`;
+
+        // Prev button
+        s += `<rect x="10" y="${barTop + 36}" width="38" height="20" rx="4"
+          fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"
+          style="cursor:pointer" onclick="navigateComm(-1)"/>`;
+        s += `<text x="29" y="${barTop + 50}"
+          text-anchor="middle" font-size="14" font-weight="700"
+          font-family="'Segoe UI',Arial,sans-serif" fill="#374151"
+          style="pointer-events:none">‹</text>`;
+
+        // Pagination dots
+        const dotY = barTop + 46;
+        for (let i = 0; i < nComms && i < 6; i++) {
+          const dotX = (W / 2) + (i - Math.min(nComms, 6) / 2 + 0.5) * 10;
+          s += `<circle cx="${dotX.toFixed(1)}" cy="${dotY}"
+            r="${i === idx ? 3.5 : 2.5}"
+            fill="${i === idx ? '#f97316' : '#d1d5db'}"/>`;
+        }
+
+        // Next button
+        s += `<rect x="${W - 48}" y="${barTop + 36}" width="38" height="20" rx="4"
+          fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"
+          style="cursor:pointer" onclick="navigateComm(1)"/>`;
+        s += `<text x="${W - 29}" y="${barTop + 50}"
+          text-anchor="middle" font-size="14" font-weight="700"
+          font-family="'Segoe UI',Arial,sans-serif" fill="#374151"
+          style="pointer-events:none">›</text>`;
+      }
+
+      s += '</svg>';
+
+      nocArea.classList.remove('has-rank-table');
+      nocArea.classList.add('has-noc');
+      nocArea.classList.toggle('highlighted', highlighted);
+      nocArea.innerHTML = s;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // METRICS
+    // ═══════════════════════════════════════════════════════════════
+
+    function updateMetrics() {
+      if (!SCHEDULE_DATA) return;
+      const pm = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+      const hm = get(SCHEDULE_DATA, 'heft_schedule',    'metrics') || {};
+
+      setMetric('m-makespan', pm.makespan, ' cycles');
+
+      let spd = pm.speedup_vs_heft;
+      if (spd == null && pm.makespan && hm.makespan)
+        spd = hm.makespan / pm.makespan;
+      setMetric('m-speedup', spd != null ? spd : null, '×');
+
+      setMetric('m-latency', pm.average_communication_latency, ' cycles');
+
+      const util = pm.average_link_utilization;
+      setMetric('m-netutil', util != null ? util * 100 : null, '%');
+
+      const dr = pm.duplication_ratio;
+      setMetric('m-dupratio', dr != null ? dr * 100 : null, '%');
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // GANTT CHART
+    // ═══════════════════════════════════════════════════════════════
+
+    function updateGanttTabs() {
+      document.querySelectorAll('.gantt-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === ganttView);
+      });
+    }
+
+    function setGanttView(view) {
+      ganttView = view;
+      updateGanttTabs();
+      const state = STATES[currentStep];
+      renderGantt(state === 'BASE_SCHEDULE' || state === 'COMMIT_TASK');
+    }
+
+    function renderGantt(highlighted = false) {
+      const ganttEl = document.getElementById('gantt-area');
+      if (!SCHEDULE_DATA) return;
+
+      const isHeft = ganttView === 'heft';
+      const tasks  = isHeft
+        ? (SCHEDULE_DATA.heft_schedule?.tasks  || [])
+        : (SCHEDULE_DATA.proposed_schedule?.tasks || []);
+
+      if (!tasks.length) {
+        ganttEl.classList.remove('has-chart', 'highlighted');
+        ganttEl.innerHTML =
+          '<span style="color:#ef4444;padding:12px;display:block;">' +
+          '⚠ No task instances found in schedule data.</span>';
+        return;
+      }
+
+      // Time range
+      const maxTime = Math.max(...tasks.map(t => t.finish));
+      const niceMax = Math.ceil(maxTime / 10) * 10;   // e.g. 78.09 → 80
+
+      // Layout constants
+      const labelW = 44, timeW = 750, W = labelW + timeW;
+      const rowH   = 17, nRows = 16, axisH = 28, padTop = 6, padBot = 6;
+      const H      = padTop + axisH + nRows * rowH + padBot;   // 312
+      const sx     = t => labelW + (t / niceMax) * timeW;      // time → x
+
+      // Tick grid: 8 evenly-spaced ticks (0 … niceMax)
+      const nTicks  = 8;
+      const tickStp = niceMax / nTicks;
+
+      // Bar colours
+      const barFill   = isHeft ? '#3b82f6' : '#22c55e';
+      const barStroke = isHeft ? '#1d4ed8' : '#15803d';
+
+      let s = `<svg xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 ${W} ${H}" width="100%"
+        style="display:block;height:auto;
+               font-family:'Segoe UI',Arial,sans-serif;">
+        <defs>
+          <pattern id="g-hatch" patternUnits="userSpaceOnUse"
+                   width="5" height="5" patternTransform="rotate(45 0 0)">
+            <line x1="0" y1="0" x2="0" y2="5"
+                  stroke="#d97706" stroke-width="1.5" stroke-opacity="0.45"/>
+          </pattern>
+        </defs>`;
+
+      // Alternating row backgrounds
+      for (let i = 0; i < nRows; i++) {
+        const ry = padTop + axisH + i * rowH;
+        s += `<rect x="0" y="${ry}" width="${W}" height="${rowH}"
+          fill="${i % 2 === 0 ? '#f8fafc' : '#f1f5f9'}"/>`;
+      }
+
+      // Vertical grid lines at tick positions
+      for (let i = 0; i <= nTicks; i++) {
+        const x = sx(i * tickStp).toFixed(1);
+        s += `<line x1="${x}" y1="${padTop + axisH}"
+          x2="${x}" y2="${H - padBot}"
+          stroke="#e2e8f0" stroke-width="0.8"/>`;
+      }
+
+      // Label-column separator
+      s += `<line x1="${labelW}" y1="${padTop}"
+        x2="${labelW}" y2="${H - padBot}"
+        stroke="#cbd5e1" stroke-width="1"/>`;
+
+      // Horizontal row separators
+      for (let i = 0; i <= nRows; i++) {
+        const ry = (padTop + axisH + i * rowH).toFixed(1);
+        s += `<line x1="0" y1="${ry}" x2="${W}" y2="${ry}"
+          stroke="#e5e7eb" stroke-width="0.5"/>`;
+      }
+
+      // Time-axis label and ticks
+      s += `<text x="${((labelW + W) / 2).toFixed(1)}" y="${padTop + 8}"
+        text-anchor="middle" font-size="7.5" fill="#9ca3af">Time (cycles)</text>`;
+
+      for (let i = 0; i <= nTicks; i++) {
+        const t = i * tickStp;
+        const x = sx(t);
+        s += `<line x1="${x.toFixed(1)}" y1="${padTop + axisH - 5}"
+          x2="${x.toFixed(1)}" y2="${padTop + axisH}"
+          stroke="#94a3b8" stroke-width="1"/>`;
+        const anchor = i === 0 ? 'start' : i === nTicks ? 'end' : 'middle';
+        s += `<text x="${x.toFixed(1)}" y="${padTop + axisH - 7}"
+          text-anchor="${anchor}" font-size="8" fill="#6b7280">
+          ${Number.isInteger(t) ? t : t.toFixed(1)}</text>`;
+      }
+
+      // Schedule label (top-right)
+      const schedLabel = isHeft ? 'HEFT Baseline' : 'Proposed CA-D';
+      const schedColor = isHeft ? '#1d4ed8' : '#15803d';
+      s += `<text x="${W - 6}" y="${padTop + axisH - 7}"
+        text-anchor="end" font-size="8" font-weight="700"
+        fill="${schedColor}">${schedLabel}</text>`;
+
+      // Processor row labels
+      for (let i = 0; i < nRows; i++) {
+        const ty = (padTop + axisH + i * rowH + rowH / 2 + 3).toFixed(1);
+        s += `<text x="${labelW - 4}" y="${ty}"
+          text-anchor="end" font-size="9.5" font-weight="600"
+          fill="#475569">P${i}</text>`;
+      }
+
+      // Task bars
+      for (const t of tasks) {
+        if (t.proc < 0 || t.proc >= nRows) continue;
+        const isDup = !t.is_primary;
+        const bx    = sx(t.start);
+        const bw    = Math.max(2, sx(t.finish) - bx);
+        const by    = padTop + axisH + t.proc * rowH + 2;
+        const bh    = rowH - 4;    // 13 px
+        const title = `${isDup ? `T${t.id}′ (duplicate)` : `T${t.id} (primary)`} │ P${t.proc} │ start=${t.start.toFixed(2)} end=${t.finish.toFixed(2)}`;
+
+        if (isDup) {
+          // Light amber tint + diagonal hatch + dashed border
+          s += `<rect x="${bx.toFixed(1)}" y="${by}"
+            width="${bw.toFixed(1)}" height="${bh}" rx="2"
+            fill="#fef3c7" stroke="#d97706" stroke-width="1"
+            stroke-dasharray="4,2"><title>${title}</title></rect>`;
+          s += `<rect x="${bx.toFixed(1)}" y="${by}"
+            width="${bw.toFixed(1)}" height="${bh}" rx="2"
+            fill="url(#g-hatch)" style="pointer-events:none"/>`;
+        } else {
+          s += `<rect x="${bx.toFixed(1)}" y="${by}"
+            width="${bw.toFixed(1)}" height="${bh}" rx="2"
+            fill="${barFill}" stroke="${barStroke}" stroke-width="1">
+            <title>${title}</title></rect>`;
+        }
+
+        // Inline label (only when bar is wide enough)
+        if (bw >= 14) {
+          const lx = (bx + bw / 2).toFixed(1);
+          const ly = (by + bh / 2 + 3).toFixed(1);
+          const lbl = isDup ? `T${t.id}′` : `T${t.id}`;
+          s += `<text x="${lx}" y="${ly}"
+            text-anchor="middle" font-size="8" font-weight="700"
+            fill="${isDup ? '#92400e' : '#ffffff'}"
+            style="pointer-events:none">${lbl}</text>`;
+        }
+      }
+
+      s += '</svg>';
+
+      ganttEl.classList.add('has-chart');
+      ganttEl.classList.toggle('highlighted', highlighted);
+      ganttEl.innerHTML = s;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DUPLICATION PANEL
+    // ═══════════════════════════════════════════════════════════════
+
+    function renderDupPanel(highlighted = false) {
+      const el = document.getElementById('dup-panel');
+      if (!el) return;
+
+      el.classList.toggle('highlighted', highlighted);
+
+      if (!SCHEDULE_DATA) { el.innerHTML = ''; return; }
+
+      const allTasks = SCHEDULE_DATA.proposed_schedule?.tasks || [];
+      const dups     = allTasks.filter(t => !t.is_primary);
+      const nPrimary = allTasks.filter(t =>  t.is_primary).length;
+      const pm       = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+      const dr       = pm.duplication_ratio != null
+        ? (pm.duplication_ratio * 100).toFixed(1) + '%' : 'N/A';
+
+      const badge = `<span class="panel-badge">${dups.length} dup${dups.length !== 1 ? 's' : ''}</span>`;
+      let html = `<div class="panel-section-title">Duplicate Instances ${badge}</div>`;
+
+      if (dups.length === 0) {
+        html += `<p style="color:#6b7280;font-size:0.75rem;margin:4px 0;">No duplicate instances.</p>`;
+      } else {
+        html += `<table class="dup-table">
+          <thead><tr>
+            <th>Task</th><th>Proc</th><th>Start</th><th>Finish</th><th>Dur</th>
+          </tr></thead>
+          <tbody>`;
+        for (const t of dups) {
+          const dur = (t.finish - t.start).toFixed(1);
+          html += `<tr>
+            <td><strong>T${t.id}′</strong></td>
+            <td>P${t.proc}</td>
+            <td>${t.start.toFixed(1)}</td>
+            <td>${t.finish.toFixed(1)}</td>
+            <td>${dur}</td>
+          </tr>`;
+        }
+        html += `</tbody></table>`;
+        html += `<div class="dup-summary">${nPrimary} primary · ${dups.length} duplicate · ratio ${dr}</div>`;
+        html += `<div class="dup-note">Detailed EFT decision trace not instrumented yet; this shows final duplicate instances from the real schedule.</div>`;
+      }
+
+      el.innerHTML = html;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // COMPARISON TABLE
+    // ═══════════════════════════════════════════════════════════════
+
+    function renderCompareTable(highlighted = false) {
+      const el = document.getElementById('compare-panel');
+      if (!el) return;
+
+      el.classList.toggle('highlighted', highlighted);
+
+      if (!SCHEDULE_DATA) { el.innerHTML = ''; return; }
+
+      const hm = get(SCHEDULE_DATA, 'heft_schedule',    'metrics') || {};
+      const pm = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+
+      let spd = pm.speedup_vs_heft;
+      if (spd == null && hm.makespan && pm.makespan)
+        spd = hm.makespan / pm.makespan;
+
+      const pct = v => v != null ? (v * 100).toFixed(1) + '%' : 'N/A';
+      const cy  = v => v != null ? fmt(v) + ' cy'              : 'N/A';
+
+      const rows = [
+        ['Makespan',         cy(hm.makespan),                              cy(pm.makespan),                              true],
+        ['Speedup vs HEFT',  '—',                                          spd != null ? fmt(spd) + '×' : 'N/A',        true],
+        ['Avg Comm Latency', cy(hm.average_communication_latency),         cy(pm.average_communication_latency),         false],
+        ['Avg Link Util',    pct(hm.average_link_utilization),             pct(pm.average_link_utilization),             false],
+        ['Max Link Util',    pct(hm.max_link_utilization),                 pct(pm.max_link_utilization),                 false],
+        ['Avg Proc Util',    pct(hm.average_processor_utilization),        pct(pm.average_processor_utilization),        false],
+        ['Primary Tasks',    String(hm.primary_task_count   ?? 'N/A'),     String(pm.primary_task_count   ?? 'N/A'),     false],
+        ['Duplicate Tasks',  String(hm.duplicate_task_count ?? 'N/A'),     String(pm.duplicate_task_count ?? 'N/A'),     true],
+        ['Dup Ratio',        pct(hm.duplication_ratio),                    pct(pm.duplication_ratio),                    true],
+      ];
+
+      let html = `<div class="panel-section-title">HEFT vs Proposed Comparison</div>
+        <table class="compare-table">
+          <thead><tr>
+            <th>Metric</th>
+            <th style="color:#1d4ed8;font-weight:800;">HEFT</th>
+            <th style="color:#15803d;font-weight:800;">CA-D</th>
+          </tr></thead>
+          <tbody>`;
+
+      for (const [label, hv, pv, isKey] of rows) {
+        html += `<tr${isKey ? ' style="background:#f0f9ff;"' : ''}>
+          <td style="${isKey ? 'font-weight:600;' : ''} white-space:nowrap;">${label}</td>
+          <td>${hv}</td>
+          <td style="font-weight:700; color:${isKey ? '#15803d' : 'inherit'};">${pv}</td>
+        </tr>`;
+      }
+
+      html += `</tbody></table>`;
+
+      const nDup   = pm.duplicate_task_count ?? '?';
+      const hmsStr = fmt(hm.makespan);
+      const pmsStr = fmt(pm.makespan);
+      const plural = (nDup !== 1 && nDup !== '1') ? 's' : '';
+      html += `<div style="margin-top:8px;padding:7px 10px;background:#f0fdf4;
+        border:1.5px solid #86efac;border-radius:6px;font-size:0.76rem;
+        color:#166534;line-height:1.55;">
+        In this run, <strong>Proposed CA-D reduces makespan from ${hmsStr} to
+        ${pmsStr}&nbsp;cycles</strong> with <strong>${nDup} duplicate
+        instance${plural}</strong>.
+      </div>`;
+
+      el.innerHTML = html;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // COMMUNICATION NAVIGATION HELPERS
+    // ═══════════════════════════════════════════════════════════════
+
+    function getSelectedComm() {
+      const comms = SCHEDULE_DATA?.proposed_schedule?.communications;
+      if (!comms || comms.length === 0) return null;
+      return comms[Math.max(0, Math.min(selectedCommIdx, comms.length - 1))] || null;
+    }
+
+    function navigateComm(delta) {
+      const comms = SCHEDULE_DATA?.proposed_schedule?.communications || [];
+      if (!comms.length) return;
+      selectedCommIdx = (selectedCommIdx + delta + comms.length) % comms.length;
+      renderStep();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PER-STEP RENDERING (presenter notes + panel highlights)
+    // ═══════════════════════════════════════════════════════════════
+
+    function renderStep() {
+      const state = STATES[currentStep];
+
+      const selComm = getSelectedComm();
+
+      if (SCHEDULE_DATA) {
+        // State-driven Gantt view
+        if (state === 'BASE_SCHEDULE') {
+          ganttView = 'heft';
+        } else if (state === 'EVALUATE_DUPLICATION' ||
+                   state === 'COMMIT_TASK' ||
+                   state === 'FINAL_REPORT') {
+          ganttView = 'proposed';
+        }
+        updateGanttTabs();
+
+        // Duplicate task IDs for EVALUATE_DUPLICATION DAG highlight
+        let hlTaskIds = null;
+        if (state === 'EVALUATE_DUPLICATION') {
+          hlTaskIds = new Set(
+            (SCHEDULE_DATA.proposed_schedule?.tasks || [])
+              .filter(t => !t.is_primary)
+              .map(t => t.id)
+          );
+        }
+
+        const showHlEdge = selComm && state !== 'LOAD_DAG' && state !== 'COMPUTE_RANK';
+        renderDAG(
+          state === 'LOAD_DAG',
+          showHlEdge ? { src: selComm.src_task, dst: selComm.dst_task } : null,
+          hlTaskIds
+        );
+        if (state === 'COMPUTE_RANK') {
+          renderRankTable(true);
+        } else {
+          renderNoC(state === 'UPDATE_NOC_CONTENTION', selComm);
+        }
+        renderGantt(state === 'BASE_SCHEDULE' || state === 'COMMIT_TASK');
+
+        // Duplication panel — always visible, highlighted in EVALUATE_DUPLICATION
+        renderDupPanel(state === 'EVALUATE_DUPLICATION');
+
+        // Comparison table — visible only in FINAL_REPORT
+        const compareEl = document.getElementById('compare-panel');
+        if (compareEl) {
+          if (state === 'FINAL_REPORT') {
+            compareEl.style.display = '';
+            renderCompareTable(true);
+          } else {
+            compareEl.style.display = 'none';
+          }
+        }
+      }
+
+      switch (state) {
+        case 'IDLE':
+          if (SCHEDULE_DATA) {
+            const dag = SCHEDULE_DATA.dag || {};
+            const pm  = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+            const hm  = get(SCHEDULE_DATA, 'heft_schedule',    'metrics') || {};
+            explainBox.innerHTML = `
+              <p><strong>Real scheduler output loaded.</strong></p>
+              <p>DAG: <strong>${(dag.tasks||[]).length} tasks</strong>,
+                 <strong>${(dag.edges||[]).length} edges</strong>
+                 &nbsp;·&nbsp; seed&nbsp;42, CCR&nbsp;1.0, α=β=1</p>
+              <p>HEFT makespan: <strong>${fmt(hm.makespan)}&nbsp;cy</strong>
+                 &nbsp;→&nbsp; CA-D makespan:
+                 <strong>${fmt(pm.makespan)}&nbsp;cy</strong>
+                 (speedup <strong>${fmt(pm.speedup_vs_heft)}×</strong>)</p>
+              <p>Press <strong>Next Step</strong> to walk through each
+                 algorithm state, or <strong>Auto Play</strong> to run
+                 the full demo automatically.</p>`;
+          } else {
+            explainBox.innerHTML = `
+              <p>Welcome to the interactive demo.</p>
+              <p>Use <strong>Next Step</strong> to advance through the pipeline,
+                 or press <strong>Auto Play</strong> to run automatically.</p>
+              <p>Each step will explain what the algorithm is doing.</p>`;
+          }
+          break;
+
+        case 'LOAD_DAG': {
+          const nT  = SCHEDULE_DATA?.dag?.tasks?.length ?? '?';
+          const nE  = SCHEDULE_DATA?.dag?.edges?.length ?? '?';
+          const po  = SCHEDULE_DATA?.dag?.priority_order ?? [];
+          explainBox.innerHTML = `
+            <p><strong>State: LOAD_DAG</strong></p>
+            <p>The application is modelled as a <em>Directed Acyclic Graph
+               (DAG)</em>. Each <strong>node</strong> is a task with a
+               computation cost; each <strong>edge</strong> carries a
+               communication volume.</p>
+            <p>This DAG has <strong>${nT} tasks</strong> and
+               <strong>${nE} edges</strong>
+               (seed&nbsp;42, CCR&nbsp;1.0, α=1, β=1).</p>
+            <p>CCR&nbsp;=&nbsp;1.0 means communication overhead is roughly
+               equal to computation — a challenging regime for scheduling.</p>`;
+          break;
+        }
+
+        case 'COMPUTE_RANK': {
+          const tasks = SCHEDULE_DATA?.dag?.tasks ?? [];
+          const po    = SCHEDULE_DATA?.dag?.priority_order ?? [];
+          const topId = po[0] ?? '?';
+          const topT  = tasks.find(t => t.id === topId);
+          explainBox.innerHTML = `
+            <p><strong>State: COMPUTE_RANK</strong></p>
+            <p>Each task gets an <em>upward rank</em> by the HEFT bottom-up
+               formula:</p>
+            <p><strong>rank(n) = w(n) + max<sub>s</sub>
+               [ c̄(n→s) + rank(s) ]</strong></p>
+            <p>w(n) = computation cost &nbsp;·&nbsp; c̄ = α·avg_hops + β·vol</p>
+            <p>T${topId} has the highest rank
+               (${topT ? topT.rank.toFixed(2) : '—'}) → scheduled
+               <strong>first</strong>. Tasks are dispatched in
+               descending-rank order.</p>`;
+          break;
+        }
+
+        case 'BASE_SCHEDULE': {
+          const ht  = SCHEDULE_DATA?.heft_schedule?.tasks || [];
+          const hm  = get(SCHEDULE_DATA, 'heft_schedule', 'metrics') || {};
+          const procsUsed = [...new Set(ht.map(t => `P${t.proc}`))].sort().join(', ');
+          explainBox.innerHTML = `
+            <p><strong>State: BASE_SCHEDULE (HEFT)</strong></p>
+            <p>HEFT greedily assigns each task to the processor that minimises
+               its <em>Earliest Finish Time</em>, following the priority list.</p>
+            <p><strong>${ht.length} tasks</strong> placed on
+               <strong>${procsUsed}</strong>. No duplication; communication
+               durations are estimated analytically.</p>
+            <p>HEFT makespan: <strong>${fmt(hm.makespan)}&nbsp;cycles</strong>
+               — this is the baseline we aim to improve.</p>`;
+          break;
+        }
+
+        case 'EVALUATE_DUPLICATION': {
+          const pt     = SCHEDULE_DATA?.proposed_schedule?.tasks || [];
+          const dups   = pt.filter(t => !t.is_primary);
+          const pm     = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+          const hm     = get(SCHEDULE_DATA, 'heft_schedule',    'metrics') || {};
+          const dupIds = [...new Set(dups.map(t => t.id))].sort((a, b) => a - b);
+          explainBox.innerHTML = `
+            <p><strong>State: EVALUATE_DUPLICATION (CA-D)</strong></p>
+            <p>For each predecessor–task pair the algorithm compares
+               <em>EFT with duplication</em> vs <em>EFT without</em>.
+               A duplicate is committed only when it strictly reduces the
+               data arrival time under the contention-aware link model.</p>
+            <p><strong>${dups.length} duplicate instance(s)</strong> added for
+               ${dupIds.map(id => `<strong>T${id}</strong>`).join(', ')}
+               — orange DAG nodes &amp; right panel show the details.</p>
+            <p>CA-D makespan: <strong>${fmt(pm.makespan)}&nbsp;cy</strong>
+               vs HEFT: <strong>${fmt(hm.makespan)}&nbsp;cy</strong>
+               (↓&nbsp;${fmt(hm.makespan - pm.makespan)}&nbsp;cy).</p>`;
+          break;
+        }
+
+        case 'UPDATE_NOC_CONTENTION': {
+          const noc    = SCHEDULE_DATA?.noc || {};
+          const comms  = SCHEDULE_DATA?.proposed_schedule?.communications || [];
+          const nComms = comms.length;
+          const idx    = nComms ? Math.max(0, Math.min(selectedCommIdx, nComms - 1)) : -1;
+          const sc     = idx >= 0 ? comms[idx] : null;
+          explainBox.innerHTML = `
+            <p><strong>State: UPDATE_NOC_CONTENTION</strong></p>
+            <p>The ${noc.rows ?? 4}×${noc.cols ?? 4} mesh uses <strong>XY
+               routing</strong> (move horizontal first, then vertical).
+               Each scheduled communication <em>reserves</em> its link
+               intervals — later comms must wait for a free slot on every
+               hop in their route.</p>
+            ${sc
+              ? `<p>Comm&nbsp;<strong>${idx + 1}/${nComms}</strong>:
+                 T${sc.src_task}→T${sc.dst_task},
+                 P${sc.src_proc}→P${sc.dst_proc},
+                 vol=${sc.volume.toFixed(1)},
+                 dur=${(sc.finish - sc.start).toFixed(1)}&nbsp;cy</p>
+                 <p>Orange links&nbsp;= route. Green&nbsp;= source.
+                 Amber&nbsp;= destination. Use <strong>‹&nbsp;›</strong>
+                 to browse all ${nComms} communications.</p>`
+              : `<p>No inter-processor communications in this schedule.</p>`}
+            <p>duration = α·hops + β·vol = ${noc.alpha ?? 1}·hops + ${noc.beta ?? 1}·vol</p>`;
+          break;
+        }
+
+        case 'COMMIT_TASK': {
+          const pt    = SCHEDULE_DATA?.proposed_schedule?.tasks || [];
+          const dups  = pt.filter(t => !t.is_primary).length;
+          const pm    = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+          const hm    = get(SCHEDULE_DATA, 'heft_schedule',    'metrics') || {};
+          const total = pt.length;
+          explainBox.innerHTML = `
+            <p><strong>State: COMMIT_TASK</strong></p>
+            <p>All task placements are now committed: <strong>${total}
+               total instances</strong> (${pt.filter(t => t.is_primary).length}
+               primary + <strong>${dups} duplicate</strong>).</p>
+            <p>The duplicates eliminate inter-processor communication on
+               the critical path, cutting makespan from
+               <strong>${fmt(hm.makespan)}&nbsp;cy</strong> to
+               <strong>${fmt(pm.makespan)}&nbsp;cy</strong>.</p>
+            <p>Gantt (Proposed CA-D) shows the committed schedule. Amber
+               hatched bars are duplicate instances.</p>`;
+          break;
+        }
+
+        case 'FINAL_REPORT': {
+          const pm    = get(SCHEDULE_DATA, 'proposed_schedule', 'metrics') || {};
+          const hm    = get(SCHEDULE_DATA, 'heft_schedule',    'metrics') || {};
+          const pt    = SCHEDULE_DATA?.proposed_schedule?.tasks || [];
+          const dups  = pt.filter(t => !t.is_primary).length;
+          const delta = hm.makespan && pm.makespan
+            ? (((hm.makespan - pm.makespan) / hm.makespan) * 100).toFixed(1) : '?';
+          explainBox.innerHTML = `
+            <p><strong>State: FINAL_REPORT</strong></p>
+            <p>CA-D: <strong>${fmt(pm.makespan)}&nbsp;cy</strong>
+               vs HEFT: <strong>${fmt(hm.makespan)}&nbsp;cy</strong>
+               → speedup <strong>${fmt(pm.speedup_vs_heft)}×</strong>
+               (${delta}% reduction).</p>
+            <p>Trade-off: <strong>${dups} duplicate instances</strong>
+               (ratio ${fmt((pm.duplication_ratio || 0) * 100)}%)
+               in exchange for shorter makespan. Network load remains low:
+               avg link utilisation
+               ${fmt((pm.average_link_utilization || 0) * 100)}%.</p>
+            <p>See the comparison table below for the full metric breakdown.</p>`;
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // DATA LOADING
+    // ═══════════════════════════════════════════════════════════════
+
+    function loadScheduleData() {
+      const srcBadge = document.getElementById('data-source-badge');
+
+      function applyData(data, source) {
+        SCHEDULE_DATA = data;
+        loadStatus.className = 'ok';
+
+        if (source === 'fetch') {
+          loadStatus.textContent  = '✓ Loaded from schedule_output.json';
+          if (srcBadge) {
+            srcBadge.textContent  = '● JSON file';
+            srcBadge.className    = 'json-file';
+            srcBadge.style.display = '';
+          }
+        } else {
+          loadStatus.textContent  = '✓ Loaded embedded real scheduler output fallback';
+          if (srcBadge) {
+            srcBadge.textContent  = '● Embedded fallback';
+            srcBadge.className    = 'embedded';
+            srcBadge.style.display = '';
+          }
+        }
+
+        console.log(`SCHEDULE_DATA applied (source: ${source})`);
+        updateMetrics();
+        renderStep();
+      }
+
+      function showFatalError(reason) {
+        loadStatus.className   = 'error';
+        loadStatus.textContent = '✗ Could not load data';
+        if (srcBadge) srcBadge.style.display = 'none';
+        explainBox.innerHTML = `
+          <p><strong>Data unavailable.</strong></p>
+          <p>${reason}</p>
+          <p>Regenerate the JSON file with:</p>
+          <p><code>python3 scripts/export_demo_json.py</code></p>
+          <p>Then serve with:
+             <code>python3 -m http.server 8080</code>
+             and open
+             <a href="http://localhost:8080/demo.html" style="color:#1d4ed8;">
+             http://localhost:8080/demo.html</a>
+             for live data.</p>`;
+      }
+
+      loadStatus.className   = 'loading';
+      loadStatus.textContent = 'Loading schedule_output.json…';
+
+      fetch('schedule_output.json')
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then(data => applyData(data, 'fetch'))
+        .catch(() => {
+          // fetch failed (file:// protocol or missing file) — use embedded fallback
+          if (EMBEDDED_SCHEDULE_DATA &&
+              typeof EMBEDDED_SCHEDULE_DATA === 'object' &&
+              EMBEDDED_SCHEDULE_DATA.dag) {
+            applyData(EMBEDDED_SCHEDULE_DATA, 'embedded');
+          } else {
+            showFatalError(
+              'Could not fetch <code>schedule_output.json</code> and the ' +
+              'embedded fallback is missing or corrupt.'
+            );
+          }
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // NAVIGATION
+    // ═══════════════════════════════════════════════════════════════
+
+    function renderStateMachine() {
+      stateItems.forEach((el, i) => {
+        el.classList.remove('done', 'active', 'pending');
+        if (i < currentStep)        el.classList.add('done');
+        else if (i === currentStep) el.classList.add('active');
+        else                        el.classList.add('pending');
+      });
+      stepBadge.textContent = `Step ${currentStep} / ${STATES.length - 1}`;
+      btnPrev.disabled = currentStep === 0;
+      btnNext.disabled = currentStep === STATES.length - 1;
+    }
+
+    function goTo(step) {
+      currentStep = Math.max(0, Math.min(STATES.length - 1, step));
+      renderStateMachine();
+      renderStep();
+    }
+
+    function reset() {
+      stopAuto();
+      goTo(0);   // goTo → renderStep handles notes + DAG
+    }
+
+    function startAuto() {
+      if (autoTimer) return;
+      btnAuto.textContent = 'Pause';
+      btnAuto.classList.replace('btn-success', 'btn-danger');
+      autoInd.textContent = '▶ playing…';
+      autoTimer = setInterval(() => {
+        if (currentStep < STATES.length - 1) goTo(currentStep + 1);
+        else stopAuto();
+      }, 2000);
+    }
+
+    function stopAuto() {
+      clearInterval(autoTimer);
+      autoTimer = null;
+      btnAuto.textContent = 'Auto Play';
+      btnAuto.classList.replace('btn-danger', 'btn-success');
+      autoInd.textContent = '';
+    }
+
+    // ── Button bindings ────────────────────────────────────────────
+    btnNext.addEventListener('click',  () => { stopAuto(); goTo(currentStep + 1); });
+    btnPrev.addEventListener('click',  () => { stopAuto(); goTo(currentStep - 1); });
+    btnReset.addEventListener('click', reset);
+    btnAuto.addEventListener('click',  () => autoTimer ? stopAuto() : startAuto());
+
+    // ── Init ───────────────────────────────────────────────────────
+    renderStateMachine();
+    loadScheduleData();
+  </script>
+</body>
+</html>
